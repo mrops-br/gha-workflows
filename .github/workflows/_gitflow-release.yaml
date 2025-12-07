@@ -201,7 +201,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "ℹ️ No changes to ${{ inputs.changelog-file }}"
           else
-            git commit -m "docs: update ${{ inputs.changelog-file }} for v${VERSION}"
+            git commit -m "docs: update ${{ inputs.changelog-file }} for v${VERSION} [skip ci]"
             git push origin main
             echo "✅ Updated ${{ inputs.changelog-file }} for v${VERSION}"
           fi
@@ -304,7 +304,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git tag -a "v${VERSION}" -m "Release version ${VERSION}"
+          git tag -a "v${VERSION}" -m "Release version ${VERSION} [skip ci]"
           git push origin "v${VERSION}"
           echo "✅ Created and pushed tag: v${VERSION}"
 
@@ -386,7 +386,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           echo "Merging main into ${{ inputs.develop-branch }}..."
-          git merge origin/main -m "chore: merge main into ${{ inputs.develop-branch }} after release v${VERSION}"
+          git merge origin/main -m "chore: merge main into ${{ inputs.develop-branch }} after release v${VERSION} [skip ci]"
           git push origin ${{ inputs.develop-branch }}
           echo "✅ Successfully merged main into ${{ inputs.develop-branch }}"
 
