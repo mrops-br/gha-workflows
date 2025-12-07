@@ -253,6 +253,7 @@ jobs:
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
 
       - name: Retag Docker image
+        id: retag
         uses: mrops-br/gha-workflows/.github/actions/docker/retag@main
         with:
           registry: ${{ inputs.docker-registry }}
