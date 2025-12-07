@@ -2,26 +2,17 @@
 # Use case: Building and releasing container images (like gha-runner-images)
 # No application deployment, just Docker image lifecycle
 
-name: CI/CD Pipeline
+name: CI
 
 on:
   push:
     branches:
       - main
       - develop
-      - 'release/**'
-      - 'hotfix/**'
-    paths:
-      - 'images/**'
-      - '.github/workflows/**'
-      - '.github/actions/**'
   pull_request:
     branches:
       - main
       - develop
-    paths:
-      - 'images/**'
-      - '.github/workflows/**'
   workflow_dispatch:
     inputs:
       force_build:
@@ -39,8 +30,8 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  # Use the container pipeline orchestrator
-  pipeline:
+  build-and-release:
+    name: Build & Release
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-container.yaml@main
     permissions:
       contents: write       # For creating tags and releases

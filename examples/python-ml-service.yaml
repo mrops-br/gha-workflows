@@ -1,7 +1,7 @@
 # Example: Python ML Service
 # Use case: Python application with type checking and ML model testing
 
-name: CI/CD Pipeline
+name: CI
 
 on:
   push:
@@ -20,7 +20,8 @@ env:
   GITOPS_REPO: mrops-br/gitops-ai-platform
 
 jobs:
-  pipeline:
+  build-and-deploy:
+    name: Build & Deploy
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-python.yaml@main
     permissions:
       contents: read

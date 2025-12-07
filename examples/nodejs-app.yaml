@@ -1,15 +1,13 @@
-# Example: Node.js Application Pipeline
-# Copy this to your app's .github/workflows/pipeline.yaml
+# Example: Node.js Application CI/CD
+# Copy this to your app's .github/workflows/ci.yaml
 
-name: Pipeline
+name: CI
 
 on:
   push:
     branches:
       - main
       - develop
-      - 'release/**'
-      - 'hotfix/**'
   pull_request:
     branches:
       - main
@@ -40,8 +38,8 @@ env:
   PROJECT: devportal
 
 jobs:
-  pipeline:
-    name: Pipeline
+  build-and-deploy:
+    name: Build & Deploy
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-nodejs.yaml@main
     with:
       app-name: ${{ env.APP_NAME }}

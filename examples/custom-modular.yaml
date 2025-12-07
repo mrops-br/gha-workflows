@@ -2,7 +2,7 @@
 # Use case: When you need fine-grained control over each step
 # This shows how to compose your own pipeline using the building blocks
 
-name: Custom CI/CD Pipeline
+name: CI
 
 on:
   push:

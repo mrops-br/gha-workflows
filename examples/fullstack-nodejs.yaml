@@ -1,7 +1,7 @@
 # Example: Full-Stack Node.js Application
 # Use case: Complete CI/CD with testing, building, and deployment to Kubernetes
 
-name: CI/CD Pipeline
+name: CI
 
 on:
   push:
@@ -30,7 +30,7 @@ env:
   GITOPS_REPO: mrops-br/gitops-devportal
 
 jobs:
-  pipeline:
+  build-and-deploy:
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-nodejs.yaml@main
     permissions:
       contents: read

@@ -1,15 +1,13 @@
 # Example: Simplified CI/CD Pipeline for Any Application
-# Copy this to your application repo: .github/workflows/pipeline.yaml
+# Copy this to your application repo: .github/workflows/ci.yaml
 
-name: CI/CD Pipeline
+name: CI
 
 on:
   push:
     branches:
       - main          # Production (manual deploy only)
       - develop       # Development (auto-deploy to dev)
-      - 'release/**'  # Staging (auto-deploy to stg)
-      - 'hotfix/**'   # Hotfix (auto-deploy to stg)
   pull_request:
     branches:
       - main
@@ -38,7 +36,8 @@ env:
 
 jobs:
   # For Node.js applications
-  pipeline-nodejs:
+  nodejs:
+    name: Node.js Build & Deploy
     if: false  # Enable this for Node.js apps
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-nodejs.yaml@main
     with:
@@ -50,7 +49,8 @@ jobs:
     secrets: inherit
 
   # For Go applications
-  pipeline-golang:
+  golang:
+    name: Go Build & Deploy
     if: false  # Enable this for Go apps
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-golang.yaml@main
     with:
@@ -61,7 +61,8 @@ jobs:
     secrets: inherit
 
   # For Python applications
-  pipeline-python:
+  python:
+    name: Python Build & Deploy
     if: false  # Enable this for Python apps
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-python.yaml@main
     with:
@@ -73,7 +74,8 @@ jobs:
     secrets: inherit
 
   # Custom pipeline (build your own)
-  custom-pipeline:
+  custom:
+    name: Custom Build
     if: true  # Enable this for custom workflows
     uses: mrops-br/gha-workflows/.github/workflows/_build-docker.yaml@main
     with:
