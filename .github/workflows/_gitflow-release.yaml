@@ -113,7 +113,7 @@ jobs:
   # Step 1: Detect or validate version
   detect-version:
     name: Detect Version
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       source-tag: ${{ steps.version.outputs.source-tag }}
@@ -164,7 +164,7 @@ jobs:
     name: Update Changelog
     needs: detect-version
     if: inputs.enable-changelog
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: write
     steps:
@@ -203,7 +203,7 @@ jobs:
     name: Retag Docker Images
     needs: detect-version
     if: inputs.enable-docker-retag
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       packages: write
       id-token: write
@@ -271,7 +271,7 @@ jobs:
       needs.detect-version.result == 'success' &&
       (needs.update-changelog.result == 'success' || needs.update-changelog.result == 'skipped') &&
       (needs.retag-docker.result == 'success' || needs.retag-docker.result == 'skipped')
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: write
     steps:
@@ -298,7 +298,7 @@ jobs:
       always() &&
       inputs.enable-github-release &&
       needs.create-git-tag.result == 'success'
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: write
     steps:
@@ -343,7 +343,7 @@ jobs:
       always() &&
       inputs.enable-merge-back &&
       needs.create-git-tag.result == 'success'
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: write
     steps:
@@ -367,7 +367,7 @@ jobs:
   # Final Summary
   summary:
     name: Release Summary
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     needs: [detect-version, update-changelog, retag-docker, create-git-tag, create-github-release, merge-to-develop]
     if: always()
     steps:
