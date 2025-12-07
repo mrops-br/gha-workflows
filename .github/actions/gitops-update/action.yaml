@@ -1,0 +1,84 @@
+name: Update GitOps Repository
+description: Update kustomization.yaml with new image tag and commit
+
+inputs:
+  gitops-repo:
+    description: 'GitOps repository (e.g., org/gitops-devportal)'
+    required: true
+  app-path:
+    description: 'Path to application in gitops repo (e.g., devportal-api/dev)'
+    required: true
+  image:
+    description: 'Full image reference (e.g., ghcr.io/org/app)'
+    required: true
+  image-tag:
+    description: 'New image tag'
+    required: true
+  git-user-name:
+    description: 'Git user name for commit'
+    required: false
+    default: 'github-actions[bot]'
+  git-user-email:
+    description: 'Git user email for commit'
+    required: false
+    default: 'github-actions[bot]@users.noreply.github.com'
+  github-token:
+    description: 'GitHub token for git operations (with repo write access)'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Clone GitOps repository
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        git clone https://x-access-token:${GH_TOKEN}@github.com/${{ inputs.gitops-repo }}.git gitops-repo
+        cd gitops-repo
+        git config user.name "${{ inputs.git-user-name }}"
+        git config user.email "${{ inputs.git-user-email }}"
+
+    - name: Update kustomization
+      shell: bash
+      working-directory: gitops-repo/${{ inputs.app-path }}
+      run: |
+        echo "Updating image to: ${{ inputs.image }}:${{ inputs.image-tag }}"
+
+        # Install kustomize if not available (when not using runner-base)
+        if ! command -v kustomize &> /dev/null; then
+          echo "Installing kustomize..."
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+        fi
+
+        # Update kustomization.yaml with new image
+        if ! kustomize edit set image ${{ inputs.image }}=${{ inputs.image }}:${{ inputs.image-tag }}; then
+          echo "❌ Failed to update kustomization.yaml"
+          echo "Current kustomization.yaml:"
+          cat kustomization.yaml
+          exit 1
+        fi
+
+        echo "✅ Updated kustomization.yaml"
+        echo "New content:"
+        cat kustomization.yaml
+
+    - name: Commit and push
+      shell: bash
+      working-directory: gitops-repo
+      run: |
+        if git diff --quiet; then
+          echo "ℹ️ No changes to commit"
+          exit 0
+        fi
+
+        git add ${{ inputs.app-path }}/kustomization.yaml
+        git commit -m "chore: update ${{ inputs.app-path }} image to ${{ inputs.image-tag }}
+
+        Image: ${{ inputs.image }}:${{ inputs.image-tag }}
+        Triggered by: ${{ github.repository }}@${{ github.sha }}
+        "
+
+        git push origin main
+        echo "✅ Pushed changes to GitOps repository"

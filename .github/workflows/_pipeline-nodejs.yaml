@@ -1,0 +1,216 @@
+name: Pipeline - Node.js Application
+description: Complete CI/CD pipeline for Node.js applications with Git Flow support
+
+on:
+  workflow_call:
+    inputs:
+      # Application configuration
+      app-name:
+        description: 'Application name'
+        required: true
+        type: string
+      project:
+        description: 'Project name (e.g., devportal)'
+        required: true
+        type: string
+      gitops-repo:
+        description: 'GitOps repository (e.g., org/gitops-devportal)'
+        required: true
+        type: string
+
+      # Node.js configuration
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '20'
+      package-manager:
+        description: 'Package manager (npm, yarn, pnpm)'
+        required: false
+        type: string
+        default: 'npm'
+
+      # Build configuration
+      working-directory:
+        description: 'Working directory for commands'
+        required: false
+        type: string
+        default: '.'
+      dockerfile:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      registry:
+        description: 'Container registry'
+        required: false
+        type: string
+        default: 'ghcr.io'
+
+      # CI options
+      enable-lint:
+        description: 'Enable linting'
+        required: false
+        type: boolean
+        default: true
+      enable-test:
+        description: 'Enable testing'
+        required: false
+        type: boolean
+        default: true
+      enable-coverage:
+        description: 'Enable coverage reporting'
+        required: false
+        type: boolean
+        default: true
+
+      # Deployment override
+      deploy-environment:
+        description: 'Environment to deploy (auto-detected if not set)'
+        required: false
+        type: string
+        default: ''
+
+      # Runners
+      ci-runner:
+        description: 'Runner for CI jobs'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      build-runner:
+        description: 'Runner for build jobs'
+        required: false
+        type: string
+        default: '[shared-runners]'
+
+    secrets:
+      argocd-auth-token:
+        description: 'ArgoCD authentication token'
+        required: false
+      argocd-server:
+        description: 'ArgoCD server URL'
+        required: false
+
+jobs:
+  # Step 1: Detect Git Flow context
+  detect-gitflow:
+    name: Detect Git Flow
+    runs-on: ubuntu-latest
+    outputs:
+      branch-type: ${{ steps.gitflow.outputs.branch-type }}
+      version: ${{ steps.gitflow.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Detect Git Flow
+        id: gitflow
+        uses: ./.github/actions/gitflow/detect-version
+
+  # Step 2: CI - Lint, Test, Security Scan
+  ci:
+    name: CI
+    uses: ./.github/workflows/_ci-nodejs.yaml
+    with:
+      node-version: ${{ inputs.node-version }}
+      package-manager: ${{ inputs.package-manager }}
+      working-directory: ${{ inputs.working-directory }}
+      enable-lint: ${{ inputs.enable-lint }}
+      enable-test: ${{ inputs.enable-test }}
+      enable-coverage: ${{ inputs.enable-coverage }}
+      enable-security-scan: true
+      runner: ${{ inputs.ci-runner }}
+
+  # Step 3: Build Docker Image
+  build:
+    name: Build
+    needs: [detect-gitflow, ci]
+    uses: ./.github/workflows/_build-docker.yaml
+    with:
+      app-name: ${{ inputs.app-name }}
+      context: ${{ inputs.working-directory }}
+      dockerfile: ${{ inputs.dockerfile }}
+      registry: ${{ inputs.registry }}
+      platforms: 'linux/amd64'
+      push: ${{ github.event_name != 'pull_request' }}
+      runner: ${{ inputs.build-runner }}
+    secrets: inherit
+
+  # Step 4: Determine deployment environment
+  determine-env:
+    name: Determine Environment
+    needs: [detect-gitflow, build]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      should-deploy: ${{ steps.env.outputs.should-deploy }}
+      image-tag: ${{ steps.tags.outputs.image-tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Detect environment
+        id: env
+        uses: ./.github/actions/gitflow/detect-env
+        with:
+          branch-type: ${{ needs.detect-gitflow.outputs.branch-type }}
+          override-env: ${{ inputs.deploy-environment }}
+
+      - name: Determine image tag
+        id: tags
+        uses: ./.github/actions/gitflow/generate-tags
+        with:
+          branch-type: ${{ needs.detect-gitflow.outputs.branch-type }}
+          version: ${{ needs.detect-gitflow.outputs.version }}
+          sha: ${{ github.sha }}
+          event-name: ${{ github.event_name }}
+          pr-number: ${{ github.event.pull_request.number }}
+
+  # Step 5: Deploy to Environment
+  deploy:
+    name: Deploy to ${{ needs.determine-env.outputs.environment }}
+    needs: [build, determine-env]
+    if: needs.determine-env.outputs.should-deploy == 'true'
+    uses: ./.github/workflows/_deploy-argocd.yaml
+    with:
+      app-name: ${{ inputs.app-name }}
+      project: ${{ inputs.project }}
+      environment: ${{ needs.determine-env.outputs.environment }}
+      gitops-repo: ${{ inputs.gitops-repo }}
+      image-tag: ${{ needs.determine-env.outputs.image-tag }}
+      registry: ${{ inputs.registry }}
+      wait-for-sync: true
+      runner: ${{ inputs.build-runner }}
+    secrets:
+      argocd-auth-token: ${{ secrets.argocd-auth-token }}
+      argocd-server: ${{ secrets.argocd-server }}
+
+  # Summary
+  summary:
+    name: Pipeline Summary
+    needs: [detect-gitflow, ci, build, determine-env, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 🚀 Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**App**: \`${{ inputs.app-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch Type**: ${{ needs.detect-gitflow.outputs.branch-type }}" >> $GITHUB_STEP_SUMMARY
+          [ -n "${{ needs.detect-gitflow.outputs.version }}" ] && echo "**Version**: ${{ needs.detect-gitflow.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| CI | ${{ needs.ci.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.deploy.result }}" == "success" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Deployed to \`${{ needs.determine-env.outputs.environment }}\`**" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.deploy.result }}" == "skipped" ]] && [[ "${{ needs.build.result }}" == "success" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Build completed (deployment skipped)**" >> $GITHUB_STEP_SUMMARY
+          fi

@@ -1,0 +1,283 @@
+name: Pipeline - Container Image
+description: Complete CI/CD pipeline for container-only repositories (like gha-runner-images)
+
+on:
+  workflow_call:
+    inputs:
+      # Image configuration
+      image-name:
+        description: 'Image name (without registry prefix, e.g., org/runner-base)'
+        required: true
+        type: string
+      registry:
+        description: 'Container registry'
+        required: false
+        type: string
+        default: 'ghcr.io'
+      context:
+        description: 'Build context directory'
+        required: false
+        type: string
+        default: '.'
+      dockerfile:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      platforms:
+        description: 'Target platforms'
+        required: false
+        type: string
+        default: 'linux/amd64'
+
+      # CI options
+      enable-lint-dockerfile:
+        description: 'Enable Dockerfile linting'
+        required: false
+        type: boolean
+        default: true
+      dockerfile-failure-threshold:
+        description: 'Dockerfile lint failure threshold'
+        required: false
+        type: string
+        default: 'warning'
+
+      # Build options
+      enable-signing:
+        description: 'Enable image signing with cosign'
+        required: false
+        type: boolean
+        default: true
+      enable-scanning:
+        description: 'Enable vulnerability scanning'
+        required: false
+        type: boolean
+        default: true
+      scan-severity:
+        description: 'Vulnerability scan severity'
+        required: false
+        type: string
+        default: 'CRITICAL,HIGH'
+      build-args:
+        description: 'Docker build arguments (multiline)'
+        required: false
+        type: string
+        default: ''
+
+      # Release options (for main branch)
+      enable-auto-release:
+        description: 'Enable automatic release on merge to main'
+        required: false
+        type: boolean
+        default: true
+      enable-changelog:
+        description: 'Enable changelog generation'
+        required: false
+        type: boolean
+        default: false
+      changelog-config:
+        description: 'Path to git-cliff config'
+        required: false
+        type: string
+        default: 'cliff.toml'
+
+      # Runners
+      lint-runner:
+        description: 'Runner for lint jobs'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      build-runner:
+        description: 'Runner for build jobs'
+        required: false
+        type: string
+        default: '[shared-runners]'
+
+jobs:
+  # Step 1: Lint Dockerfile
+  lint:
+    name: Lint Dockerfile
+    if: inputs.enable-lint-dockerfile
+    runs-on: ${{ inputs.lint-runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Lint Dockerfile
+        uses: mrops-br/gha-workflows/.github/actions/quality/lint-dockerfile@main
+        with:
+          dockerfile: ${{ inputs.dockerfile }}
+          failure-threshold: ${{ inputs.dockerfile-failure-threshold }}
+
+  # Step 2: Detect Git Flow context
+  detect-context:
+    name: Detect Context
+    runs-on: ubuntu-latest
+    outputs:
+      branch-type: ${{ steps.gitflow.outputs.branch-type }}
+      version: ${{ steps.gitflow.outputs.version }}
+      source-tag: ${{ steps.gitflow.outputs.source-tag }}
+      should-push: ${{ steps.push.outputs.should-push }}
+      is-main-merge: ${{ steps.push.outputs.is-main-merge }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 10
+
+      - name: Detect Git Flow
+        id: gitflow
+        uses: mrops-br/gha-workflows/.github/actions/gitflow/detect-version@main
+
+      - name: Determine push strategy
+        id: push
+        run: |
+          # Push on:
+          # - develop branch pushes
+          # - PRs to main from release/* or hotfix/* branches (build RC images)
+          # Don't push on:
+          # - PRs to develop (just validate)
+          # - Other PRs
+
+          SHOULD_PUSH="false"
+          IS_MAIN_MERGE="false"
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # Check if PR is targeting main and source is release/* or hotfix/*
+            if [[ "${{ github.base_ref }}" == "main" ]] && [[ "${{ steps.gitflow.outputs.branch-type }}" =~ ^(release|hotfix)$ ]]; then
+              SHOULD_PUSH="true"
+              echo "✅ PR to main from ${{ github.head_ref }} - will build and push RC image"
+            else
+              SHOULD_PUSH="false"
+              echo "ℹ️ PR validation only - will not push image"
+            fi
+          elif [[ "${{ github.ref_name }}" == "main" ]]; then
+            IS_MAIN_MERGE="true"
+            # Main pushes trigger release workflow, not build
+            SHOULD_PUSH="false"
+            echo "ℹ️ Main branch - will trigger release workflow"
+          elif [[ "${{ github.ref_name }}" == "develop" ]] || [[ "${{ steps.gitflow.outputs.branch-type }}" =~ ^(release|hotfix)$ ]]; then
+            SHOULD_PUSH="true"
+            echo "✅ Push to ${{ github.ref_name }} - will build and push image"
+          else
+            SHOULD_PUSH="false"
+            echo "ℹ️ Other branch - build only, no push"
+          fi
+
+          echo "should-push=$SHOULD_PUSH" >> $GITHUB_OUTPUT
+          echo "is-main-merge=$IS_MAIN_MERGE" >> $GITHUB_OUTPUT
+
+  # Step 3: Build and Push Image
+  build:
+    name: Build Image
+    needs: [lint, detect-context]
+    if: |
+      always() &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      needs.detect-context.outputs.is-main-merge == 'false'
+    runs-on: ${{ inputs.build-runner }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      security-events: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      tags: ${{ steps.build.outputs.tags }}
+      image-ref: ${{ steps.build.outputs.image-ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build and push Docker image
+        id: build
+        uses: mrops-br/gha-workflows/.github/actions/docker/build-push@main
+        with:
+          context: ${{ inputs.context }}
+          dockerfile: ${{ inputs.dockerfile }}
+          registry: ${{ inputs.registry }}
+          image-name: ${{ inputs.image-name }}
+          push: ${{ needs.detect-context.outputs.should-push }}
+          platforms: ${{ inputs.platforms }}
+          build-args: ${{ inputs.build-args }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign image
+        if: needs.detect-context.outputs.should-push == 'true' && inputs.enable-signing
+        uses: mrops-br/gha-workflows/.github/actions/docker/sign@main
+        with:
+          image-digest: ${{ steps.build.outputs.digest }}
+          image-tags: ${{ steps.build.outputs.tags }}
+          registry: ${{ inputs.registry }}
+
+      - name: Scan image for vulnerabilities
+        if: needs.detect-context.outputs.should-push == 'true' && inputs.enable-scanning
+        continue-on-error: true
+        uses: mrops-br/gha-workflows/.github/actions/docker/scan@main
+        with:
+          image-ref: ${{ steps.build.outputs.image-ref }}
+          severity: ${{ inputs.scan-severity }}
+
+  # Step 4: Release (on main branch merge)
+  release:
+    name: Release
+    needs: [detect-context]
+    if: |
+      needs.detect-context.outputs.is-main-merge == 'true' &&
+      inputs.enable-auto-release
+    uses: ./.github/workflows/_gitflow-release.yaml
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    secrets: inherit
+    with:
+      auto-detect-version: true
+      enable-docker-retag: true
+      docker-registry: ${{ inputs.registry }}
+      docker-image-name: ${{ inputs.image-name }}
+      docker-semver-tags: true
+      enable-changelog: ${{ inputs.enable-changelog }}
+      changelog-config: ${{ inputs.changelog-config }}
+      enable-git-tag: true
+      enable-merge-back: true
+      runner: ${{ inputs.lint-runner }}
+
+  # Summary
+  summary:
+    name: Pipeline Summary
+    needs: [lint, detect-context, build, release]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 🐳 Container Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image**: \`${{ inputs.registry }}/${{ inputs.image-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch Type**: ${{ needs.detect-context.outputs.branch-type }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Release | ${{ needs.release.result }} |" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.detect-context.outputs.is-main-merge }}" == "true" ]]; then
+            if [[ "${{ needs.release.result }}" == "success" ]]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "✅ **Release completed successfully!**" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "❌ **Release failed**" >> $GITHUB_STEP_SUMMARY
+            fi
+          elif [[ "${{ needs.build.result }}" == "success" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ needs.detect-context.outputs.should-push }}" == "true" ]]; then
+              echo "✅ **Build and push completed**" >> $GITHUB_STEP_SUMMARY
+              echo "**Tags**: \`${{ needs.build.outputs.tags }}\`" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ **Build validated (not pushed)**" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi

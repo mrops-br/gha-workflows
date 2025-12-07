@@ -1,0 +1,19 @@
+# Code owners for gha-workflows repository
+# These users will be automatically requested for review when PRs touch these files
+
+# Global owners - everything needs review from platform team
+* @mrops-br/platform-team
+
+# Workflows - require approval from platform team leads
+/.github/workflows/ @mrops-br/platform-team-leads
+
+# Actions - require approval from platform team leads
+/.github/actions/ @mrops-br/platform-team-leads
+
+# Documentation
+/README.md @mrops-br/platform-team
+/docs/ @mrops-br/platform-team
+
+# Configuration files
+/cliff.toml @mrops-br/platform-team-leads
+/.github/dependabot.yaml @mrops-br/platform-team-leads

@@ -1,0 +1,67 @@
+# Example: Python ML Service
+# Use case: Python application with type checking and ML model testing
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop, 'release/**', 'hotfix/**']
+  pull_request:
+    branches: [main, develop]
+
+env:
+  APP_NAME: ml-inference
+  PROJECT: ai-platform
+  GITOPS_REPO: mrops-br/gitops-ai-platform
+
+jobs:
+  pipeline:
+    uses: mrops-br/gha-workflows/.github/workflows/_pipeline-python.yaml@main
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      security-events: write
+    secrets: inherit
+    with:
+      app-name: ${{ env.APP_NAME }}
+      project: ${{ env.PROJECT }}
+      gitops-repo: ${{ env.GITOPS_REPO }}
+      python-version: '3.12'
+      package-manager: 'pip'  # or 'poetry', 'pipenv'
+      enable-lint: true
+      enable-test: true
+      enable-type-check: true
+      enable-coverage: true
+
+# Project structure expected:
+# ├── requirements.txt (or pyproject.toml for poetry)
+# ├── setup.py (optional)
+# ├── mypy.ini or pyproject.toml (for type checking config)
+# ├── .ruff.toml (optional, for linting config)
+# ├── src/
+# │   └── ml_inference/
+# │       ├── __init__.py
+# │       ├── api.py
+# │       ├── models.py
+# │       └── inference.py
+# ├── tests/
+# │   ├── __init__.py
+# │   ├── test_api.py
+# │   └── test_inference.py
+# ├── Dockerfile
+# └── .github/
+#     └── workflows/
+#         └── pipeline.yaml (this file)
+
+# CI Pipeline runs:
+# 1. ruff check (linting)
+# 2. black --check (code formatting)
+# 3. mypy (type checking)
+# 4. pytest (tests with coverage)
+# 5. bandit (security scanning)
+
+# For ML models, consider adding:
+# - Model validation tests
+# - Performance benchmarks
+# - Data schema validation

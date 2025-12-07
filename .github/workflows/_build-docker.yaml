@@ -1,0 +1,164 @@
+name: Build & Push Docker Image
+description: Build, sign, scan, and push Docker images with Git Flow tagging
+
+on:
+  workflow_call:
+    inputs:
+      # Image configuration
+      app-name:
+        description: 'Application name (used for image naming)'
+        required: true
+        type: string
+      registry:
+        description: 'Container registry'
+        required: false
+        type: string
+        default: 'ghcr.io'
+      context:
+        description: 'Build context directory'
+        required: false
+        type: string
+        default: '.'
+      dockerfile:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      platforms:
+        description: 'Target platforms (comma-separated)'
+        required: false
+        type: string
+        default: 'linux/amd64'
+
+      # Push strategy
+      push:
+        description: 'Whether to push the image'
+        required: false
+        type: boolean
+        default: true
+
+      # Build options
+      build-args:
+        description: 'Build arguments (multiline)'
+        required: false
+        type: string
+        default: ''
+      enable-sbom:
+        description: 'Enable SBOM generation'
+        required: false
+        type: boolean
+        default: true
+      enable-provenance:
+        description: 'Enable provenance attestation'
+        required: false
+        type: boolean
+        default: true
+
+      # Security options
+      enable-signing:
+        description: 'Enable image signing with cosign'
+        required: false
+        type: boolean
+        default: true
+      enable-scanning:
+        description: 'Enable vulnerability scanning'
+        required: false
+        type: boolean
+        default: true
+      scan-severity:
+        description: 'Vulnerability scan severity'
+        required: false
+        type: string
+        default: 'CRITICAL,HIGH'
+      scan-fail-on-error:
+        description: 'Fail if vulnerabilities are found'
+        required: false
+        type: boolean
+        default: false
+
+      # Advanced options
+      buildx-driver:
+        description: 'Buildx driver (remote, docker-container, or empty)'
+        required: false
+        type: string
+        default: 'remote'
+      buildx-endpoint:
+        description: 'Buildx remote endpoint'
+        required: false
+        type: string
+        default: 'tcp://buildkitd.github-systems.svc.cluster.local:1234'
+
+      # Runner
+      runner:
+        description: 'Runner labels'
+        required: false
+        type: string
+        default: '[shared-runners]'
+
+    outputs:
+      image-tags:
+        description: 'Generated image tags (newline-separated)'
+        value: ${{ jobs.build.outputs.tags }}
+      image-tags-csv:
+        description: 'Generated image tags (comma-separated)'
+        value: ${{ jobs.build.outputs.tags-csv }}
+      image-digest:
+        description: 'Image digest'
+        value: ${{ jobs.build.outputs.digest }}
+      image-ref:
+        description: 'Full image reference with digest'
+        value: ${{ jobs.build.outputs.image-ref }}
+
+jobs:
+  build:
+    name: Build and Push
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      security-events: write
+    outputs:
+      tags: ${{ steps.build.outputs.tags }}
+      tags-csv: ${{ steps.build.outputs.tags-csv }}
+      digest: ${{ steps.build.outputs.digest }}
+      image-ref: ${{ steps.build.outputs.image-ref }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build and push Docker image
+        id: build
+        uses: ./.github/actions/docker/build-push
+        with:
+          context: ${{ inputs.context }}
+          dockerfile: ${{ inputs.dockerfile }}
+          registry: ${{ inputs.registry }}
+          image-name: ${{ github.repository_owner }}/${{ inputs.app-name }}
+          push: ${{ inputs.push }}
+          platforms: ${{ inputs.platforms }}
+          build-args: ${{ inputs.build-args }}
+          buildx-driver: ${{ inputs.buildx-driver }}
+          buildx-endpoint: ${{ inputs.buildx-endpoint }}
+          enable-sbom: ${{ inputs.enable-sbom }}
+          enable-provenance: ${{ inputs.enable-provenance }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign image
+        if: inputs.push && inputs.enable-signing
+        uses: ./.github/actions/docker/sign
+        with:
+          image-digest: ${{ steps.build.outputs.digest }}
+          image-tags: ${{ steps.build.outputs.tags }}
+          registry: ${{ inputs.registry }}
+
+      - name: Scan image for vulnerabilities
+        if: inputs.push && inputs.enable-scanning
+        continue-on-error: ${{ !inputs.scan-fail-on-error }}
+        uses: ./.github/actions/docker/scan
+        with:
+          image-ref: ${{ steps.build.outputs.image-ref }}
+          severity: ${{ inputs.scan-severity }}
+          fail-on-error: ${{ inputs.scan-fail-on-error }}

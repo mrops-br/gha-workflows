@@ -1,0 +1,72 @@
+name: Sign Container Image
+description: Sign container image using cosign with keyless signing (Sigstore)
+
+inputs:
+  image-digest:
+    description: 'Image digest (sha256:...)'
+    required: true
+  image-tags:
+    description: 'Image tags to sign (newline or comma-separated)'
+    required: true
+  registry:
+    description: 'Container registry'
+    required: false
+    default: 'ghcr.io'
+
+outputs:
+  signatures:
+    description: 'Signature references'
+    value: ${{ steps.sign.outputs.signatures }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@v3
+
+    - name: Sign image with cosign
+      id: sign
+      shell: bash
+      env:
+        DIGEST: ${{ inputs.image-digest }}
+        TAGS: ${{ inputs.image-tags }}
+      run: |
+        # Convert tags to array (handle both comma and newline separated)
+        TAGS_NORMALIZED=$(echo "$TAGS" | tr ',\n' ' ')
+
+        images=""
+        for tag in $TAGS_NORMALIZED; do
+          # Remove any leading/trailing whitespace
+          tag=$(echo "$tag" | xargs)
+          [ -z "$tag" ] && continue
+
+          # Add registry if not already present
+          if [[ "$tag" != *"${{ inputs.registry }}"* ]]; then
+            tag="${{ inputs.registry }}/$tag"
+          fi
+
+          images+="${tag}@${DIGEST} "
+        done
+
+        if [ -z "$images" ]; then
+          echo "❌ No images to sign"
+          exit 1
+        fi
+
+        echo "Signing images with cosign (keyless):"
+        echo "$images"
+
+        # Sign with keyless signing (uses OIDC token)
+        cosign sign --yes $images
+
+        echo "✅ Successfully signed images"
+        echo "signatures=$images" >> $GITHUB_OUTPUT
+
+        # Summary
+        echo "### Image Signing" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Signed with cosign (keyless/Sigstore)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Signed Images:**" >> $GITHUB_STEP_SUMMARY
+        for img in $images; do
+          echo "- \`$img\`" >> $GITHUB_STEP_SUMMARY
+        done

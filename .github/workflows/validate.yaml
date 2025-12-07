@@ -1,0 +1,180 @@
+name: Validate Workflows
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+jobs:
+  validate-yaml:
+    name: Validate YAML Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Lint workflow files
+        run: |
+          echo "Linting workflow files..."
+          yamllint -d "{extends: default, rules: {line-length: {max: 200}, document-start: disable}}" .github/workflows/
+
+      - name: Lint action files
+        run: |
+          echo "Linting action files..."
+          yamllint -d "{extends: default, rules: {line-length: {max: 200}, document-start: disable}}" .github/actions/
+
+  validate-actions:
+    name: Validate Action Metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate action.yaml files
+        run: |
+          for action_file in .github/actions/*/action.yaml; do
+            echo "Validating: $action_file"
+
+            # Check required fields exist
+            if ! grep -q "^name:" "$action_file"; then
+              echo "❌ Missing 'name' field in $action_file"
+              exit 1
+            fi
+
+            if ! grep -q "^description:" "$action_file"; then
+              echo "❌ Missing 'description' field in $action_file"
+              exit 1
+            fi
+
+            if ! grep -q "^runs:" "$action_file"; then
+              echo "❌ Missing 'runs' field in $action_file"
+              exit 1
+            fi
+
+            echo "✅ $action_file is valid"
+          done
+
+  validate-workflows:
+    name: Validate Workflow Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate workflow files
+        run: |
+          for workflow_file in .github/workflows/*.yaml; do
+            echo "Validating: $workflow_file"
+
+            # Check required fields
+            if ! grep -q "^name:" "$workflow_file"; then
+              echo "❌ Missing 'name' field in $workflow_file"
+              exit 1
+            fi
+
+            if ! grep -q "^on:" "$workflow_file"; then
+              echo "❌ Missing 'on' field in $workflow_file"
+              exit 1
+            fi
+
+            if ! grep -q "^jobs:" "$workflow_file"; then
+              echo "❌ Missing 'jobs' field in $workflow_file"
+              exit 1
+            fi
+
+            echo "✅ $workflow_file is valid"
+          done
+
+  check-documentation:
+    name: Check Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Verify README exists and is updated
+        run: |
+          if [ ! -f README.md ]; then
+            echo "❌ README.md not found"
+            exit 1
+          fi
+
+          # Check if README mentions all workflows
+          for workflow in .github/workflows/_*.yaml; do
+            workflow_name=$(basename "$workflow")
+            if ! grep -q "$workflow_name" README.md; then
+              echo "⚠️ Warning: $workflow_name not documented in README.md"
+            fi
+          done
+
+          # Check if README mentions all actions
+          for action in .github/actions/*/action.yaml; do
+            action_name=$(basename $(dirname "$action"))
+            if ! grep -q "$action_name" README.md; then
+              echo "⚠️ Warning: Action $action_name not documented in README.md"
+            fi
+          done
+
+          echo "✅ Documentation check complete"
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.github'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  summary:
+    name: Validation Summary
+    runs-on: ubuntu-latest
+    needs: [validate-yaml, validate-actions, validate-workflows, check-documentation, security-scan]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| YAML Syntax | ${{ needs.validate-yaml.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Action Metadata | ${{ needs.validate-actions.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Workflow Syntax | ${{ needs.validate-workflows.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Documentation | ${{ needs.check-documentation.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.validate-yaml.result }}" == "success" && \
+                "${{ needs.validate-actions.result }}" == "success" && \
+                "${{ needs.validate-workflows.result }}" == "success" && \
+                "${{ needs.check-documentation.result }}" == "success" && \
+                "${{ needs.security-scan.result }}" == "success" ]]; then
+            echo "✅ All validation checks passed!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Some validation checks failed. Please review the logs." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi

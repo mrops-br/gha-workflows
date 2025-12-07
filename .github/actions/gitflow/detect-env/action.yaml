@@ -1,0 +1,88 @@
+name: Detect Environment from Git Flow
+description: Detect deployment environment based on Git Flow branch
+
+inputs:
+  branch-type:
+    description: 'Branch type (main, develop, release, hotfix, feature, other)'
+    required: true
+  override-env:
+    description: 'Override environment (for manual deployments)'
+    required: false
+    default: ''
+
+outputs:
+  environment:
+    description: 'Target environment (dev, stg, prd, or empty)'
+    value: ${{ steps.detect.outputs.environment }}
+  should-deploy:
+    description: 'Whether automatic deployment should happen'
+    value: ${{ steps.detect.outputs.should-deploy }}
+  requires-approval:
+    description: 'Whether deployment requires manual approval'
+    value: ${{ steps.detect.outputs.requires-approval }}
+
+runs:
+  using: composite
+  steps:
+    - name: Detect environment
+      id: detect
+      shell: bash
+      run: |
+        BRANCH_TYPE="${{ inputs.branch-type }}"
+        OVERRIDE_ENV="${{ inputs.override-env }}"
+
+        ENVIRONMENT=""
+        SHOULD_DEPLOY="false"
+        REQUIRES_APPROVAL="false"
+
+        # Check for override first
+        if [ -n "$OVERRIDE_ENV" ]; then
+          ENVIRONMENT="$OVERRIDE_ENV"
+          SHOULD_DEPLOY="true"
+          if [ "$OVERRIDE_ENV" = "prd" ]; then
+            REQUIRES_APPROVAL="true"
+          fi
+          echo "✅ Override environment: $ENVIRONMENT (requires approval: $REQUIRES_APPROVAL)"
+        else
+          # Auto-detect based on branch type
+          case "$BRANCH_TYPE" in
+            develop)
+              ENVIRONMENT="dev"
+              SHOULD_DEPLOY="true"
+              REQUIRES_APPROVAL="false"
+              echo "✅ Develop branch → dev environment (auto-deploy)"
+              ;;
+
+            release|hotfix)
+              ENVIRONMENT="stg"
+              SHOULD_DEPLOY="true"
+              REQUIRES_APPROVAL="false"
+              echo "✅ Release/Hotfix branch → stg environment (auto-deploy)"
+              ;;
+
+            main)
+              ENVIRONMENT="prd"
+              SHOULD_DEPLOY="false"  # Require manual trigger for production
+              REQUIRES_APPROVAL="true"
+              echo "ℹ️ Main branch → prd environment (manual approval required)"
+              ;;
+
+            *)
+              ENVIRONMENT=""
+              SHOULD_DEPLOY="false"
+              REQUIRES_APPROVAL="false"
+              echo "ℹ️ No automatic deployment for branch type: $BRANCH_TYPE"
+              ;;
+          esac
+        fi
+
+        echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+        echo "should-deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
+        echo "requires-approval=$REQUIRES_APPROVAL" >> $GITHUB_OUTPUT
+
+        # Summary
+        echo "### Environment Detection" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch Type**: $BRANCH_TYPE" >> $GITHUB_STEP_SUMMARY
+        [ -n "$ENVIRONMENT" ] && echo "- **Environment**: $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+        echo "- **Auto-Deploy**: $SHOULD_DEPLOY" >> $GITHUB_STEP_SUMMARY
+        echo "- **Requires Approval**: $REQUIRES_APPROVAL" >> $GITHUB_STEP_SUMMARY

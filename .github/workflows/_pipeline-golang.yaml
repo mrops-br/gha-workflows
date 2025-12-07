@@ -1,0 +1,160 @@
+name: Pipeline - Go Application
+
+on:
+  workflow_call:
+    inputs:
+      app-name:
+        description: 'Application name'
+        required: true
+        type: string
+      project:
+        description: 'Project name (e.g., devportal)'
+        required: true
+        type: string
+      gitops-repo:
+        description: 'GitOps repository (e.g., org/gitops-devportal)'
+        required: true
+        type: string
+      go-version:
+        description: 'Go version to use'
+        required: false
+        type: string
+        default: '1.23'
+      working-directory:
+        description: 'Working directory for commands'
+        required: false
+        type: string
+        default: '.'
+      dockerfile:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      registry:
+        description: 'Container registry'
+        required: false
+        type: string
+        default: 'ghcr.io'
+      enable-lint:
+        description: 'Enable linting'
+        required: false
+        type: boolean
+        default: true
+      enable-test:
+        description: 'Enable testing'
+        required: false
+        type: boolean
+        default: true
+      enable-coverage:
+        description: 'Enable coverage reporting'
+        required: false
+        type: boolean
+        default: true
+      deploy-environment:
+        description: 'Environment to deploy (auto-detected if not set)'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      argocd-auth-token:
+        description: 'ArgoCD authentication token'
+        required: true
+      argocd-server:
+        description: 'ArgoCD server URL'
+        required: true
+
+jobs:
+  # Step 1: CI - Lint, Test, Security Scan
+  ci:
+    name: CI
+    uses: ./.github/workflows/_ci-golang.yaml
+    with:
+      go-version: ${{ inputs.go-version }}
+      working-directory: ${{ inputs.working-directory }}
+      enable-lint: ${{ inputs.enable-lint }}
+      enable-test: ${{ inputs.enable-test }}
+      enable-coverage: ${{ inputs.enable-coverage }}
+      enable-security-scan: true
+      runner: 'ubuntu-latest'
+
+  # Step 2: Build Docker Image
+  build:
+    name: Build
+    needs: ci
+    uses: ./.github/workflows/_build-docker.yaml
+    with:
+      app-name: ${{ inputs.app-name }}
+      context: ${{ inputs.working-directory }}
+      dockerfile: ${{ inputs.dockerfile }}
+      registry: ${{ inputs.registry }}
+      platforms: 'linux/amd64'
+      push: ${{ github.event_name != 'pull_request' }}
+      runner: '[shared-runners]'
+    secrets: inherit
+
+  # Step 3: Determine environment
+  determine-env:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      should-deploy: ${{ steps.env.outputs.should-deploy }}
+      image-tag: ${{ steps.env.outputs.image-tag }}
+    steps:
+      - name: Determine deployment environment
+        id: env
+        run: |
+          # Use input if provided, otherwise auto-detect
+          if [ -n "${{ inputs.deploy-environment }}" ]; then
+            ENV="${{ inputs.deploy-environment }}"
+            SHOULD_DEPLOY="true"
+            IMAGE_TAG="${{ needs.build.outputs.image-tags }}"
+          elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            ENV="dev"
+            SHOULD_DEPLOY="true"
+            IMAGE_TAG="dev-latest"
+          elif [[ "${{ github.ref }}" =~ ^refs/heads/release/ ]]; then
+            ENV="stg"
+            SHOULD_DEPLOY="true"
+            # Extract version tag from build outputs
+            IMAGE_TAG=$(echo "${{ needs.build.outputs.image-tags }}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-rc' | head -1)
+            if [ -z "$IMAGE_TAG" ]; then
+              IMAGE_TAG="${{ github.sha }}"
+            fi
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            ENV="prd"
+            SHOULD_DEPLOY="false"  # Require manual approval for production
+            IMAGE_TAG="latest"
+          else
+            ENV=""
+            SHOULD_DEPLOY="false"
+            IMAGE_TAG=""
+          fi
+
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "should-deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
+          echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+          echo "Environment: $ENV"
+          echo "Should Deploy: $SHOULD_DEPLOY"
+          echo "Image Tag: $IMAGE_TAG"
+
+  # Step 4: Deploy to Environment
+  deploy:
+    name: Deploy to ${{ needs.determine-env.outputs.environment }}
+    needs: [build, determine-env]
+    if: needs.determine-env.outputs.should-deploy == 'true'
+    uses: ./.github/workflows/_deploy-argocd.yaml
+    with:
+      app-name: ${{ inputs.app-name }}
+      project: ${{ inputs.project }}
+      environment: ${{ needs.determine-env.outputs.environment }}
+      gitops-repo: ${{ inputs.gitops-repo }}
+      image-tag: ${{ needs.determine-env.outputs.image-tag }}
+      registry: ${{ inputs.registry }}
+      wait-for-sync: true
+      runner: '[shared-runners]'
+    secrets:
+      argocd-auth-token: ${{ secrets.argocd-auth-token }}
+      argocd-server: ${{ secrets.argocd-server }}

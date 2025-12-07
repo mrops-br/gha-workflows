@@ -1,0 +1,90 @@
+name: ArgoCD Sync
+description: Trigger ArgoCD sync and optionally wait for deployment
+
+inputs:
+  argocd-server:
+    description: 'ArgoCD server URL (e.g., argocd.example.com)'
+    required: true
+  argocd-token:
+    description: 'ArgoCD auth token'
+    required: true
+  app-name:
+    description: 'ArgoCD application name'
+    required: true
+  wait:
+    description: 'Wait for sync to complete'
+    required: false
+    default: 'true'
+  timeout:
+    description: 'Timeout for waiting (e.g., 5m)'
+    required: false
+    default: '5m'
+  prune:
+    description: 'Prune resources during sync'
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Install ArgoCD CLI
+      shell: bash
+      run: |
+        # Install ArgoCD CLI if not available (when not using runner-base image)
+        if ! command -v argocd &> /dev/null; then
+          echo "ArgoCD CLI not found, installing..."
+          curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          sudo install -m 555 /tmp/argocd /usr/local/bin/argocd
+          rm /tmp/argocd
+        else
+          echo "ArgoCD CLI already available"
+        fi
+        argocd version --client
+
+    - name: Login to ArgoCD
+      shell: bash
+      env:
+        ARGOCD_SERVER: ${{ inputs.argocd-server }}
+        ARGOCD_AUTH_TOKEN: ${{ inputs.argocd-token }}
+      run: |
+        argocd login $ARGOCD_SERVER \
+          --auth-token=$ARGOCD_AUTH_TOKEN \
+          --grpc-web
+
+    - name: Sync application
+      shell: bash
+      env:
+        ARGOCD_SERVER: ${{ inputs.argocd-server }}
+        ARGOCD_AUTH_TOKEN: ${{ inputs.argocd-token }}
+      run: |
+        SYNC_ARGS=""
+        if [[ "${{ inputs.prune }}" == "true" ]]; then
+          SYNC_ARGS="--prune"
+        fi
+
+        echo "Syncing ArgoCD application: ${{ inputs.app-name }}"
+        argocd app sync ${{ inputs.app-name }} $SYNC_ARGS
+
+    - name: Wait for sync
+      if: inputs.wait == 'true'
+      shell: bash
+      env:
+        ARGOCD_SERVER: ${{ inputs.argocd-server }}
+        ARGOCD_AUTH_TOKEN: ${{ inputs.argocd-token }}
+      run: |
+        echo "Waiting for sync to complete (timeout: ${{ inputs.timeout }})..."
+        argocd app wait ${{ inputs.app-name }} \
+          --health \
+          --timeout ${{ inputs.timeout }}
+
+        echo "✅ Application synced and healthy"
+
+    - name: Get application status
+      if: always()
+      shell: bash
+      env:
+        ARGOCD_SERVER: ${{ inputs.argocd-server }}
+        ARGOCD_AUTH_TOKEN: ${{ inputs.argocd-token }}
+      run: |
+        echo "Application status:"
+        argocd app get ${{ inputs.app-name }}

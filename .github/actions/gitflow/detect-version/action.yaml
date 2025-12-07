@@ -1,0 +1,122 @@
+name: Detect Version from Git Flow
+description: Extract version from branch name or merge commit message (Git Flow pattern)
+
+inputs:
+  branch:
+    description: 'Branch name to analyze (leave empty to auto-detect)'
+    required: false
+    default: ''
+  commit-message:
+    description: 'Commit message to analyze (for detecting merges)'
+    required: false
+    default: ''
+
+outputs:
+  version:
+    description: 'Detected version (e.g., 1.2.3)'
+    value: ${{ steps.detect.outputs.version }}
+  source-tag:
+    description: 'Source tag for retagging (e.g., 1.2.3-rc, 1.2.3-hotfix-rc)'
+    value: ${{ steps.detect.outputs.source-tag }}
+  is-release:
+    description: 'Whether this is a release branch'
+    value: ${{ steps.detect.outputs.is-release }}
+  is-hotfix:
+    description: 'Whether this is a hotfix branch'
+    value: ${{ steps.detect.outputs.is-hotfix }}
+  branch-type:
+    description: 'Branch type (main, develop, release, hotfix, feature, other)'
+    value: ${{ steps.detect.outputs.branch-type }}
+
+runs:
+  using: composite
+  steps:
+    - name: Detect version from Git Flow
+      id: detect
+      shell: bash
+      run: |
+        # Determine branch to analyze
+        if [ -n "${{ inputs.branch }}" ]; then
+          BRANCH="${{ inputs.branch }}"
+        elif [ "${{ github.event_name }}" = "pull_request" ]; then
+          BRANCH="${{ github.head_ref }}"
+        else
+          BRANCH="${{ github.ref_name }}"
+        fi
+
+        echo "Analyzing branch: $BRANCH"
+
+        # Initialize outputs
+        VERSION=""
+        SOURCE_TAG=""
+        IS_RELEASE="false"
+        IS_HOTFIX="false"
+        BRANCH_TYPE="other"
+
+        # Detect branch type and extract version
+        if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+          BRANCH_TYPE="main"
+
+          # For main branch, try to extract from commit message
+          COMMIT_MSG="${{ inputs.commit-message }}"
+          if [ -z "$COMMIT_MSG" ]; then
+            COMMIT_MSG=$(git log -1 --pretty=%B 2>/dev/null || echo "")
+          fi
+
+          echo "Commit message: $COMMIT_MSG"
+
+          # Try to extract from "Merge branch 'release/X.Y.Z'" or "Merge pull request ... from .../release/X.Y.Z"
+          if [[ "$COMMIT_MSG" =~ release/([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+            SOURCE_TAG="${VERSION}-rc"
+            IS_RELEASE="true"
+            echo "✅ Detected release version: $VERSION (source: $SOURCE_TAG)"
+          elif [[ "$COMMIT_MSG" =~ hotfix/([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+            SOURCE_TAG="${VERSION}-hotfix-rc"
+            IS_HOTFIX="true"
+            echo "✅ Detected hotfix version: $VERSION (source: $SOURCE_TAG)"
+          else
+            echo "ℹ️ No version detected from commit message on main branch"
+          fi
+
+        elif [ "$BRANCH" = "develop" ]; then
+          BRANCH_TYPE="develop"
+          echo "ℹ️ Develop branch - no version extraction"
+
+        elif [[ "$BRANCH" =~ ^release/(.+) ]]; then
+          BRANCH_TYPE="release"
+          VERSION="${BASH_REMATCH[1]}"
+          SOURCE_TAG="${VERSION}-rc"
+          IS_RELEASE="true"
+          echo "✅ Release branch detected: version=$VERSION, tag=$SOURCE_TAG"
+
+        elif [[ "$BRANCH" =~ ^hotfix/(.+) ]]; then
+          BRANCH_TYPE="hotfix"
+          VERSION="${BASH_REMATCH[1]}"
+          SOURCE_TAG="${VERSION}-hotfix-rc"
+          IS_HOTFIX="true"
+          echo "✅ Hotfix branch detected: version=$VERSION, tag=$SOURCE_TAG"
+
+        elif [[ "$BRANCH" =~ ^feature/ ]]; then
+          BRANCH_TYPE="feature"
+          echo "ℹ️ Feature branch - no version extraction"
+
+        else
+          BRANCH_TYPE="other"
+          echo "ℹ️ Other branch type - no version extraction"
+        fi
+
+        # Set outputs
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "source-tag=$SOURCE_TAG" >> $GITHUB_OUTPUT
+        echo "is-release=$IS_RELEASE" >> $GITHUB_OUTPUT
+        echo "is-hotfix=$IS_HOTFIX" >> $GITHUB_OUTPUT
+        echo "branch-type=$BRANCH_TYPE" >> $GITHUB_OUTPUT
+
+        # Summary
+        echo "### Git Flow Detection Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch**: $BRANCH" >> $GITHUB_STEP_SUMMARY
+        echo "- **Type**: $BRANCH_TYPE" >> $GITHUB_STEP_SUMMARY
+        [ -n "$VERSION" ] && echo "- **Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+        [ -n "$SOURCE_TAG" ] && echo "- **Source Tag**: $SOURCE_TAG" >> $GITHUB_STEP_SUMMARY

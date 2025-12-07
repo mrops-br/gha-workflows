@@ -1,0 +1,146 @@
+name: CI - Generic
+description: Generic CI workflow for repositories without specific tech stack requirements
+
+on:
+  workflow_call:
+    inputs:
+      # Dockerfile linting
+      enable-lint-dockerfile:
+        description: 'Enable Dockerfile linting'
+        required: false
+        type: boolean
+        default: false
+      dockerfile:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      dockerfile-failure-threshold:
+        description: 'Dockerfile lint failure threshold'
+        required: false
+        type: string
+        default: 'error'
+
+      # Custom lint command
+      enable-custom-lint:
+        description: 'Enable custom lint command'
+        required: false
+        type: boolean
+        default: false
+      custom-lint-command:
+        description: 'Custom lint command to run'
+        required: false
+        type: string
+        default: ''
+
+      # Custom test command
+      enable-custom-test:
+        description: 'Enable custom test command'
+        required: false
+        type: boolean
+        default: false
+      custom-test-command:
+        description: 'Custom test command to run'
+        required: false
+        type: string
+        default: ''
+
+      # Custom setup command
+      custom-setup-command:
+        description: 'Custom setup command (runs before lint/test)'
+        required: false
+        type: string
+        default: ''
+
+      # Working directory
+      working-directory:
+        description: 'Working directory for commands'
+        required: false
+        type: string
+        default: '.'
+
+      # Runner
+      runner:
+        description: 'Runner to use'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+jobs:
+  lint-dockerfile:
+    name: Lint Dockerfile
+    if: inputs.enable-lint-dockerfile
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Lint Dockerfile
+        uses: ./.github/actions/quality/lint-dockerfile
+        with:
+          dockerfile: ${{ inputs.dockerfile }}
+          failure-threshold: ${{ inputs.dockerfile-failure-threshold }}
+
+  custom-lint:
+    name: Custom Lint
+    if: inputs.enable-custom-lint
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run setup command
+        if: inputs.custom-setup-command != ''
+        run: ${{ inputs.custom-setup-command }}
+
+      - name: Run custom lint
+        run: ${{ inputs.custom-lint-command }}
+
+  custom-test:
+    name: Custom Test
+    if: inputs.enable-custom-test
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run setup command
+        if: inputs.custom-setup-command != ''
+        run: ${{ inputs.custom-setup-command }}
+
+      - name: Run custom tests
+        run: ${{ inputs.custom-test-command }}
+
+  summary:
+    name: CI Summary
+    needs: [lint-dockerfile, custom-lint, custom-test]
+    if: always()
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## CI Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint Dockerfile | ${{ needs.lint-dockerfile.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Custom Lint | ${{ needs.custom-lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Custom Test | ${{ needs.custom-test.result }} |" >> $GITHUB_STEP_SUMMARY
+
+          # Check if any job failed
+          if [[ "${{ needs.lint-dockerfile.result }}" == "failure" ]] || \
+             [[ "${{ needs.custom-lint.result }}" == "failure" ]] || \
+             [[ "${{ needs.custom-test.result }}" == "failure" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "❌ CI checks failed" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ All CI checks passed" >> $GITHUB_STEP_SUMMARY
+          fi

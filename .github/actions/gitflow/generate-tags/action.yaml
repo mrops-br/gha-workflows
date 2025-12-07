@@ -1,0 +1,128 @@
+name: Generate Git Flow Tags
+description: Generate image tags based on Git Flow branch and event type
+
+inputs:
+  branch-type:
+    description: 'Branch type (main, develop, release, hotfix, feature, other)'
+    required: true
+  version:
+    description: 'Version number (e.g., 1.2.3)'
+    required: false
+    default: ''
+  sha:
+    description: 'Git commit SHA (short)'
+    required: true
+  event-name:
+    description: 'GitHub event name'
+    required: true
+  pr-number:
+    description: 'Pull request number (if applicable)'
+    required: false
+    default: ''
+
+outputs:
+  tags:
+    description: 'Comma-separated list of tags'
+    value: ${{ steps.generate.outputs.tags }}
+  primary-tag:
+    description: 'Primary tag for this build'
+    value: ${{ steps.generate.outputs.primary-tag }}
+
+runs:
+  using: composite
+  steps:
+    - name: Generate tags
+      id: generate
+      shell: bash
+      run: |
+        TAGS=()
+        PRIMARY_TAG=""
+        BRANCH_TYPE="${{ inputs.branch-type }}"
+        VERSION="${{ inputs.version }}"
+        SHA="${{ inputs.sha }}"
+        EVENT="${{ inputs.event-name }}"
+        PR_NUMBER="${{ inputs.pr-number }}"
+
+        echo "Generating tags for:"
+        echo "  Branch type: $BRANCH_TYPE"
+        echo "  Version: $VERSION"
+        echo "  SHA: $SHA"
+        echo "  Event: $EVENT"
+
+        case "$BRANCH_TYPE" in
+          main)
+            if [ -n "$VERSION" ]; then
+              # Main branch with version (after release/hotfix merge)
+              TAGS+=("$VERSION")
+              TAGS+=("latest")
+              PRIMARY_TAG="$VERSION"
+              echo "✅ Main branch with version: $VERSION, latest"
+            else
+              # Main branch without version
+              TAGS+=("$SHA")
+              TAGS+=("latest")
+              PRIMARY_TAG="latest"
+              echo "ℹ️ Main branch without version: latest, $SHA"
+            fi
+            ;;
+
+          develop)
+            TAGS+=("dev-latest")
+            TAGS+=("dev-$SHA")
+            PRIMARY_TAG="dev-latest"
+            echo "✅ Develop branch: dev-latest, dev-$SHA"
+            ;;
+
+          release)
+            if [ -n "$VERSION" ]; then
+              TAGS+=("${VERSION}-rc")
+              TAGS+=("$SHA")
+              PRIMARY_TAG="${VERSION}-rc"
+              echo "✅ Release branch: ${VERSION}-rc, $SHA"
+            else
+              echo "❌ Release branch without version"
+              exit 1
+            fi
+            ;;
+
+          hotfix)
+            if [ -n "$VERSION" ]; then
+              TAGS+=("${VERSION}-hotfix-rc")
+              TAGS+=("$SHA")
+              PRIMARY_TAG="${VERSION}-hotfix-rc"
+              echo "✅ Hotfix branch: ${VERSION}-hotfix-rc, $SHA"
+            else
+              echo "❌ Hotfix branch without version"
+              exit 1
+            fi
+            ;;
+
+          feature)
+            if [ "$EVENT" = "pull_request" ] && [ -n "$PR_NUMBER" ]; then
+              TAGS+=("pr-$PR_NUMBER")
+              PRIMARY_TAG="pr-$PR_NUMBER"
+              echo "ℹ️ Feature PR: pr-$PR_NUMBER"
+            else
+              TAGS+=("$SHA")
+              PRIMARY_TAG="$SHA"
+              echo "ℹ️ Feature branch: $SHA"
+            fi
+            ;;
+
+          *)
+            TAGS+=("$SHA")
+            PRIMARY_TAG="$SHA"
+            echo "ℹ️ Other branch: $SHA"
+            ;;
+        esac
+
+        # Convert array to comma-separated string
+        TAGS_CSV=$(IFS=,; echo "${TAGS[*]}")
+
+        echo "tags=$TAGS_CSV" >> $GITHUB_OUTPUT
+        echo "primary-tag=$PRIMARY_TAG" >> $GITHUB_OUTPUT
+
+        # Summary
+        echo "### Generated Tags" >> $GITHUB_STEP_SUMMARY
+        echo "- **Primary**: \`$PRIMARY_TAG\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **All**: \`$TAGS_CSV\`" >> $GITHUB_STEP_SUMMARY

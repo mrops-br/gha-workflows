@@ -1,0 +1,399 @@
+name: Git Flow Release
+description: Automated release workflow for Git Flow (retag, changelog, git tag, merge back to develop)
+
+on:
+  workflow_call:
+    inputs:
+      # Version detection
+      auto-detect-version:
+        description: 'Auto-detect version from merge commit (true) or use manual inputs (false)'
+        required: false
+        type: boolean
+        default: true
+      version:
+        description: 'Version number (e.g., 1.2.3) - required if auto-detect-version is false'
+        required: false
+        type: string
+        default: ''
+      source-tag:
+        description: 'Source tag for retagging (e.g., 1.2.3-rc) - required if auto-detect-version is false'
+        required: false
+        type: string
+        default: ''
+
+      # Docker image retagging
+      enable-docker-retag:
+        description: 'Enable Docker image retagging'
+        required: false
+        type: boolean
+        default: false
+      docker-registry:
+        description: 'Docker registry (e.g., ghcr.io)'
+        required: false
+        type: string
+        default: 'ghcr.io'
+      docker-image-name:
+        description: 'Docker image name (e.g., org/app)'
+        required: false
+        type: string
+        default: ''
+      docker-semver-tags:
+        description: 'Enable semantic versioning tags (X, X.Y, X.Y.Z, latest)'
+        required: false
+        type: boolean
+        default: true
+
+      # Changelog
+      enable-changelog:
+        description: 'Enable changelog generation with git-cliff'
+        required: false
+        type: boolean
+        default: false
+      changelog-config:
+        description: 'Path to git-cliff config file'
+        required: false
+        type: string
+        default: 'cliff.toml'
+      changelog-file:
+        description: 'Path to changelog file'
+        required: false
+        type: string
+        default: 'CHANGELOG.md'
+
+      # Git operations
+      enable-git-tag:
+        description: 'Create git tag for the release'
+        required: false
+        type: boolean
+        default: true
+      enable-merge-back:
+        description: 'Merge main back to develop after release'
+        required: false
+        type: boolean
+        default: true
+      develop-branch:
+        description: 'Name of develop branch'
+        required: false
+        type: string
+        default: 'develop'
+
+      # GitHub Release
+      enable-github-release:
+        description: 'Create GitHub release'
+        required: false
+        type: boolean
+        default: false
+      release-draft:
+        description: 'Create release as draft'
+        required: false
+        type: boolean
+        default: false
+      release-prerelease:
+        description: 'Mark release as prerelease'
+        required: false
+        type: boolean
+        default: false
+
+      # Runner
+      runner:
+        description: 'Runner to use'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+    outputs:
+      version:
+        description: 'Released version'
+        value: ${{ jobs.detect-version.outputs.version }}
+      source-tag:
+        description: 'Source tag used for retagging'
+        value: ${{ jobs.detect-version.outputs.source-tag }}
+
+jobs:
+  # Step 1: Detect or validate version
+  detect-version:
+    name: Detect Version
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      source-tag: ${{ steps.version.outputs.source-tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 10
+
+      - name: Auto-detect version from commit
+        if: inputs.auto-detect-version
+        id: auto
+        uses: ./.github/actions/gitflow/detect-version
+        with:
+          branch: ''
+
+      - name: Set version outputs
+        id: version
+        run: |
+          if [ "${{ inputs.auto-detect-version }}" = "true" ]; then
+            VERSION="${{ steps.auto.outputs.version }}"
+            SOURCE_TAG="${{ steps.auto.outputs.source-tag }}"
+
+            if [ -z "$VERSION" ]; then
+              echo "❌ Could not auto-detect version from commit message"
+              echo "Expected merge commit from release/* or hotfix/* branch"
+              exit 1
+            fi
+          else
+            VERSION="${{ inputs.version }}"
+            SOURCE_TAG="${{ inputs.source-tag }}"
+
+            if [ -z "$VERSION" ] || [ -z "$SOURCE_TAG" ]; then
+              echo "❌ Manual mode requires both version and source-tag inputs"
+              exit 1
+            fi
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "source-tag=$SOURCE_TAG" >> $GITHUB_OUTPUT
+
+          echo "### Release Version" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source Tag**: $SOURCE_TAG" >> $GITHUB_STEP_SUMMARY
+
+  # Step 2: Update Changelog (optional)
+  update-changelog:
+    name: Update Changelog
+    needs: detect-version
+    if: inputs.enable-changelog
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog with git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: ${{ inputs.changelog-config }}
+          args: --verbose --tag v${{ needs.detect-version.outputs.version }}
+        env:
+          OUTPUT: ${{ inputs.changelog-file }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and push changelog
+        run: |
+          VERSION="${{ needs.detect-version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add ${{ inputs.changelog-file }}
+
+          if git diff --staged --quiet; then
+            echo "ℹ️ No changes to ${{ inputs.changelog-file }}"
+          else
+            git commit -m "docs: update ${{ inputs.changelog-file }} for v${VERSION}"
+            git push origin main
+            echo "✅ Updated ${{ inputs.changelog-file }} for v${VERSION}"
+          fi
+
+  # Step 3: Retag Docker Images (optional)
+  retag-docker:
+    name: Retag Docker Images
+    needs: detect-version
+    if: inputs.enable-docker-retag
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    permissions:
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Generate semver tags
+        id: semver
+        if: inputs.docker-semver-tags
+        run: |
+          VERSION="${{ needs.detect-version.outputs.version }}"
+
+          if [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"
+            MINOR="${BASH_REMATCH[2]}"
+            PATCH="${BASH_REMATCH[3]}"
+
+            echo "major=$MAJOR" >> $GITHUB_OUTPUT
+            echo "minor=$MAJOR.$MINOR" >> $GITHUB_OUTPUT
+            echo "patch=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
+
+            TAGS="${MAJOR},$MAJOR.$MINOR,$MAJOR.$MINOR.$PATCH,latest"
+            echo "tags=$TAGS" >> $GITHUB_OUTPUT
+            echo "Generated semver tags: $TAGS"
+          else
+            echo "❌ Invalid version format: $VERSION (expected X.Y.Z)"
+            exit 1
+          fi
+
+      - name: Determine target tags
+        id: tags
+        run: |
+          if [ "${{ inputs.docker-semver-tags }}" = "true" ]; then
+            TAGS="${{ steps.semver.outputs.tags }}"
+          else
+            TAGS="${{ needs.detect-version.outputs.version }},latest"
+          fi
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+
+      - name: Retag Docker image
+        uses: ./.github/actions/docker/retag
+        with:
+          registry: ${{ inputs.docker-registry }}
+          image-name: ${{ inputs.docker-image-name }}
+          source-tag: ${{ needs.detect-version.outputs.source-tag }}
+          target-tags: ${{ steps.tags.outputs.tags }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign retagged images
+        uses: ./.github/actions/docker/sign
+        with:
+          image-digest: ${{ steps.retag.outputs.digest }}
+          image-tags: ${{ steps.tags.outputs.tags }}
+          registry: ${{ inputs.docker-registry }}
+
+  # Step 4: Create Git Tag
+  create-git-tag:
+    name: Create Git Tag
+    needs: [detect-version, update-changelog, retag-docker]
+    if: |
+      always() &&
+      inputs.enable-git-tag &&
+      needs.detect-version.result == 'success' &&
+      (needs.update-changelog.result == 'success' || needs.update-changelog.result == 'skipped') &&
+      (needs.retag-docker.result == 'success' || needs.retag-docker.result == 'skipped')
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Create and push tag
+        run: |
+          VERSION="${{ needs.detect-version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "v${VERSION}" -m "Release version ${VERSION}"
+          git push origin "v${VERSION}"
+          echo "✅ Created and pushed tag: v${VERSION}"
+
+  # Step 5: Create GitHub Release (optional)
+  create-github-release:
+    name: Create GitHub Release
+    needs: [detect-version, create-git-tag]
+    if: |
+      always() &&
+      inputs.enable-github-release &&
+      needs.create-git-tag.result == 'success'
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION="${{ needs.detect-version.outputs.version }}"
+
+          # Extract changelog section for this version if available
+          if [ -f "${{ inputs.changelog-file }}" ]; then
+            NOTES=$(sed -n "/## \[${VERSION}\]/,/## \[/p" "${{ inputs.changelog-file }}" | sed '$ d' || echo "")
+          fi
+
+          # Fallback to commit messages if no changelog
+          if [ -z "$NOTES" ]; then
+            NOTES="## What's Changed"$'\n\n'
+            NOTES+=$(git log --pretty=format:"- %s (%h)" v${VERSION}^..v${VERSION} || echo "See git history")
+          fi
+
+          # Save to file for multiline
+          echo "$NOTES" > release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.detect-version.outputs.version }}
+          name: v${{ needs.detect-version.outputs.version }}
+          body_path: release_notes.md
+          draft: ${{ inputs.release-draft }}
+          prerelease: ${{ inputs.release-prerelease }}
+
+  # Step 6: Merge back to develop
+  merge-to-develop:
+    name: Merge to Develop
+    needs: [detect-version, create-git-tag]
+    if: |
+      always() &&
+      inputs.enable-merge-back &&
+      needs.create-git-tag.result == 'success'
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.develop-branch }}
+          fetch-depth: 0
+
+      - name: Merge main into develop
+        run: |
+          VERSION="${{ needs.detect-version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          echo "Merging main into ${{ inputs.develop-branch }}..."
+          git merge origin/main -m "chore: merge main into ${{ inputs.develop-branch }} after release v${VERSION}"
+          git push origin ${{ inputs.develop-branch }}
+          echo "✅ Successfully merged main into ${{ inputs.develop-branch }}"
+
+  # Final Summary
+  summary:
+    name: Release Summary
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    needs: [detect-version, update-changelog, retag-docker, create-git-tag, create-github-release, merge-to-develop]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          VERSION="${{ needs.detect-version.outputs.version }}"
+          SOURCE_TAG="${{ needs.detect-version.outputs.source-tag }}"
+
+          echo "## 🚀 Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`v${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Source Tag:** \`${SOURCE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Task | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version Detection | ${{ needs.detect-version.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Changelog Update | ${{ needs.update-changelog.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Retag | ${{ needs.retag-docker.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Git Tag | ${{ needs.create-git-tag.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Release | ${{ needs.create-github-release.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Merge to Develop | ${{ needs.merge-to-develop.result }} |" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.detect-version.result }}" == "success" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### ✅ Released: \`v${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### ❌ Release failed" >> $GITHUB_STEP_SUMMARY
+          fi

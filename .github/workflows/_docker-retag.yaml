@@ -1,0 +1,124 @@
+name: Docker Retag
+description: Retag Docker images with new tags (useful for promotions and releases)
+
+on:
+  workflow_call:
+    inputs:
+      registry:
+        description: 'Container registry'
+        required: false
+        type: string
+        default: 'ghcr.io'
+      image-name:
+        description: 'Image name (without registry prefix, e.g., org/app)'
+        required: true
+        type: string
+      source-tag:
+        description: 'Source tag to retag from'
+        required: true
+        type: string
+      target-tags:
+        description: 'Target tags (comma or newline-separated)'
+        required: true
+        type: string
+      enable-signing:
+        description: 'Sign retagged images with cosign'
+        required: false
+        type: boolean
+        default: true
+      enable-semver:
+        description: 'Generate semantic versioning tags from version (e.g., 1.2.3 → 1, 1.2, 1.2.3)'
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: 'Version for semver generation (required if enable-semver is true)'
+        required: false
+        type: string
+        default: ''
+      runner:
+        description: 'Runner to use'
+        required: false
+        type: string
+        default: '[shared-runners]'
+
+    outputs:
+      digest:
+        description: 'Image digest'
+        value: ${{ jobs.retag.outputs.digest }}
+      tags:
+        description: 'Retagged tags'
+        value: ${{ jobs.retag.outputs.tags }}
+
+jobs:
+  retag:
+    name: Retag Image
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    permissions:
+      packages: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.retag.outputs.digest }}
+      tags: ${{ steps.prepare-tags.outputs.final-tags }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Generate semver tags
+        id: semver
+        if: inputs.enable-semver
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          if [ -z "$VERSION" ]; then
+            echo "❌ enable-semver requires version input"
+            exit 1
+          fi
+
+          if [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"
+            MINOR="${BASH_REMATCH[2]}"
+            PATCH="${BASH_REMATCH[3]}"
+
+            SEMVER_TAGS="${MAJOR},${MAJOR}.${MINOR},${MAJOR}.${MINOR}.${PATCH}"
+            echo "semver-tags=$SEMVER_TAGS" >> $GITHUB_OUTPUT
+            echo "Generated semver tags: $SEMVER_TAGS"
+          else
+            echo "❌ Invalid version format: $VERSION (expected X.Y.Z)"
+            exit 1
+          fi
+
+      - name: Prepare final tags
+        id: prepare-tags
+        run: |
+          TAGS="${{ inputs.target-tags }}"
+
+          if [ "${{ inputs.enable-semver }}" = "true" ]; then
+            SEMVER="${{ steps.semver.outputs.semver-tags }}"
+            TAGS="${TAGS},${SEMVER}"
+          fi
+
+          # Remove duplicates and clean up
+          TAGS=$(echo "$TAGS" | tr ',\n' ' ' | tr -s ' ' | sed 's/^ //;s/ $//' | tr ' ' ',')
+
+          echo "final-tags=$TAGS" >> $GITHUB_OUTPUT
+          echo "Final tags: $TAGS"
+
+      - name: Retag image
+        id: retag
+        uses: ./.github/actions/docker/retag
+        with:
+          registry: ${{ inputs.registry }}
+          image-name: ${{ inputs.image-name }}
+          source-tag: ${{ inputs.source-tag }}
+          target-tags: ${{ steps.prepare-tags.outputs.final-tags }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign retagged images
+        if: inputs.enable-signing
+        uses: ./.github/actions/docker/sign
+        with:
+          image-digest: ${{ steps.retag.outputs.digest }}
+          image-tags: ${{ steps.prepare-tags.outputs.final-tags }}
+          registry: ${{ inputs.registry }}

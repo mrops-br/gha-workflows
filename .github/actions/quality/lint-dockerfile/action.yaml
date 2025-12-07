@@ -1,0 +1,69 @@
+name: Lint Dockerfile
+description: Lint Dockerfile using hadolint for best practices and security
+
+inputs:
+  dockerfile:
+    description: 'Path to Dockerfile'
+    required: false
+    default: 'Dockerfile'
+  failure-threshold:
+    description: 'Failure threshold (error, warning, info, style, ignore, none)'
+    required: false
+    default: 'error'
+  config-file:
+    description: 'Path to hadolint config file (.hadolint.yaml)'
+    required: false
+    default: ''
+  ignore-rules:
+    description: 'Rules to ignore (comma-separated, e.g., DL3008,DL3009)'
+    required: false
+    default: ''
+  output-file:
+    description: 'Output file for results'
+    required: false
+    default: ''
+  format:
+    description: 'Output format (tty, json, checkstyle, codeclimate, gitlab_codeclimate, gnu, codacy, sarif)'
+    required: false
+    default: 'tty'
+
+outputs:
+  passed:
+    description: 'Whether linting passed'
+    value: ${{ steps.lint.outcome == 'success' }}
+
+runs:
+  using: composite
+  steps:
+    - name: Lint Dockerfile with hadolint
+      id: lint
+      uses: hadolint/hadolint-action@v3.1.0
+      with:
+        dockerfile: ${{ inputs.dockerfile }}
+        failure-threshold: ${{ inputs.failure-threshold }}
+        config: ${{ inputs.config-file }}
+        ignore: ${{ inputs.ignore-rules }}
+        output-file: ${{ inputs.output-file }}
+        format: ${{ inputs.format }}
+
+    - name: Generate summary
+      if: always()
+      shell: bash
+      run: |
+        echo "### Dockerfile Lint Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **File**: \`${{ inputs.dockerfile }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Threshold**: ${{ inputs.failure-threshold }}" >> $GITHUB_STEP_SUMMARY
+
+        if [ "${{ steps.lint.outcome }}" = "success" ]; then
+          echo "- **Status**: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- **Status**: ❌ Failed" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        if [ -n "${{ inputs.output-file }}" ] && [ -f "${{ inputs.output-file }}" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Issues Found:**" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat "${{ inputs.output-file }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        fi

@@ -1,0 +1,199 @@
+# Example: Custom Modular Pipeline
+# Use case: When you need fine-grained control over each step
+# This shows how to compose your own pipeline using the building blocks
+
+name: Custom CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop, 'release/**']
+  pull_request:
+    branches: [main, develop]
+
+env:
+  APP_NAME: custom-app
+  PROJECT: platform
+
+jobs:
+  # Step 1: Detect Git Flow context
+  detect-gitflow:
+    name: Detect Git Flow Context
+    runs-on: ubuntu-latest
+    outputs:
+      branch-type: ${{ steps.gitflow.outputs.branch-type }}
+      version: ${{ steps.gitflow.outputs.version }}
+      source-tag: ${{ steps.gitflow.outputs.source-tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 10
+
+      - name: Detect version and branch type
+        id: gitflow
+        uses: mrops-br/gha-workflows/.github/actions/gitflow/detect-version@main
+
+  # Step 2: Lint Dockerfile
+  lint-dockerfile:
+    name: Lint Dockerfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Lint
+        uses: mrops-br/gha-workflows/.github/actions/quality/lint-dockerfile@main
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+
+  # Step 3: Custom CI (your own tests)
+  ci:
+    name: Custom CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run custom linting
+        run: npm run lint:custom
+
+      - name: Run integration tests
+        run: npm run test:integration
+
+      - name: Generate custom reports
+        run: npm run report:metrics
+
+  # Step 4: Build Docker image using composite action
+  build:
+    name: Build Docker Image
+    needs: [detect-gitflow, lint-dockerfile, ci]
+    if: always() && needs.lint-dockerfile.result == 'success' && needs.ci.result == 'success'
+    runs-on: [shared-runners]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      security-events: write
+    outputs:
+      image-ref: ${{ steps.build.outputs.image-ref }}
+      tags: ${{ steps.build.outputs.tags }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build and push
+        id: build
+        uses: mrops-br/gha-workflows/.github/actions/docker/build-push@main
+        with:
+          context: .
+          dockerfile: Dockerfile
+          registry: ghcr.io
+          image-name: ${{ github.repository_owner }}/${{ env.APP_NAME }}
+          push: ${{ github.event_name != 'pull_request' }}
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ needs.detect-gitflow.outputs.version || 'dev' }}
+            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign image
+        if: github.event_name != 'pull_request'
+        uses: mrops-br/gha-workflows/.github/actions/docker/sign@main
+        with:
+          image-digest: ${{ steps.build.outputs.digest }}
+          image-tags: ${{ steps.build.outputs.tags }}
+
+      - name: Scan for vulnerabilities
+        if: github.event_name != 'pull_request'
+        uses: mrops-br/gha-workflows/.github/actions/docker/scan@main
+        with:
+          image-ref: ${{ steps.build.outputs.image-ref }}
+          severity: CRITICAL,HIGH
+          fail-on-error: false
+
+  # Step 5: Determine environment
+  determine-env:
+    name: Determine Environment
+    needs: [detect-gitflow, build]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      should-deploy: ${{ steps.env.outputs.should-deploy }}
+      image-tag: ${{ steps.tags.outputs.primary-tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Detect environment
+        id: env
+        uses: mrops-br/gha-workflows/.github/actions/gitflow/detect-env@main
+        with:
+          branch-type: ${{ needs.detect-gitflow.outputs.branch-type }}
+
+      - name: Generate tags
+        id: tags
+        uses: mrops-br/gha-workflows/.github/actions/gitflow/generate-tags@main
+        with:
+          branch-type: ${{ needs.detect-gitflow.outputs.branch-type }}
+          version: ${{ needs.detect-gitflow.outputs.version }}
+          sha: ${{ github.sha }}
+          event-name: ${{ github.event_name }}
+
+  # Step 6: Custom deployment (not using ArgoCD)
+  deploy:
+    name: Deploy to ${{ needs.determine-env.outputs.environment }}
+    needs: [determine-env, build]
+    if: needs.determine-env.outputs.should-deploy == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ needs.determine-env.outputs.environment }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Deploy to custom platform
+        env:
+          ENV: ${{ needs.determine-env.outputs.environment }}
+          IMAGE_TAG: ${{ needs.determine-env.outputs.image-tag }}
+        run: |
+          echo "Deploying to $ENV environment"
+          echo "Image: ghcr.io/${{ github.repository_owner }}/${{ env.APP_NAME }}:$IMAGE_TAG"
+
+          # Your custom deployment logic here
+          # Examples:
+          # - Deploy to Cloud Run
+          # - Update Lambda function
+          # - Deploy to ECS
+          # - Update Helm release
+          # - Trigger external CI/CD system
+
+  # Step 7: Release on main branch
+  release:
+    name: Create Release
+    needs: [detect-gitflow]
+    if: |
+      github.ref == 'refs/heads/main' &&
+      needs.detect-gitflow.outputs.version != ''
+    uses: mrops-br/gha-workflows/.github/workflows/_gitflow-release.yaml@main
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    secrets: inherit
+    with:
+      auto-detect-version: true
+      enable-docker-retag: true
+      docker-registry: ghcr.io
+      docker-image-name: ${{ github.repository_owner }}/${{ env.APP_NAME }}
+      docker-semver-tags: true
+      enable-changelog: false
+      enable-git-tag: true
+      enable-merge-back: true
+      enable-github-release: true

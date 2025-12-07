@@ -1,0 +1,115 @@
+name: CI - Lint, Test & Security Scan
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner labels (e.g., ubuntu-latest or [self-hosted, shared-runners])'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      container-image:
+        description: 'Container image to run jobs in (optional)'
+        required: false
+        type: string
+        default: ''
+      working-directory:
+        description: 'Working directory for commands'
+        required: false
+        type: string
+        default: '.'
+      enable-lint:
+        description: 'Enable linting step'
+        required: false
+        type: boolean
+        default: true
+      enable-test:
+        description: 'Enable testing step'
+        required: false
+        type: boolean
+        default: true
+      enable-security-scan:
+        description: 'Enable security scanning'
+        required: false
+        type: boolean
+        default: true
+      lint-command:
+        description: 'Command to run for linting'
+        required: false
+        type: string
+        default: 'npm run lint'
+      test-command:
+        description: 'Command to run for testing'
+        required: false
+        type: string
+        default: 'npm test'
+      setup-command:
+        description: 'Command to run before lint/test (e.g., npm install)'
+        required: false
+        type: string
+        default: 'npm ci'
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    if: inputs.enable-lint
+    container: ${{ inputs.container-image != '' && inputs.container-image || null }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup
+        if: inputs.setup-command != ''
+        run: ${{ inputs.setup-command }}
+
+      - name: Lint
+        run: ${{ inputs.lint-command }}
+
+  test:
+    name: Test
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    if: inputs.enable-test
+    container: ${{ inputs.container-image != '' && inputs.container-image || null }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup
+        if: inputs.setup-command != ''
+        run: ${{ inputs.setup-command }}
+
+      - name: Test
+        run: ${{ inputs.test-command }}
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    if: inputs.enable-security-scan
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: ${{ inputs.working-directory }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'

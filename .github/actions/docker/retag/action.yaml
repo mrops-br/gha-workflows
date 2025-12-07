@@ -1,0 +1,107 @@
+name: Retag Container Image
+description: Retag existing container image with new tags (useful for releases)
+
+inputs:
+  registry:
+    description: 'Container registry'
+    required: true
+  image-name:
+    description: 'Image name (without registry prefix)'
+    required: true
+  source-tag:
+    description: 'Source tag to retag from (e.g., 1.0.0-rc)'
+    required: true
+  target-tags:
+    description: 'Target tags (comma or newline-separated, e.g., 1.0.0,latest)'
+    required: true
+  registry-username:
+    description: 'Registry username'
+    required: false
+    default: ''
+  registry-password:
+    description: 'Registry password or token'
+    required: false
+    default: ''
+
+outputs:
+  digest:
+    description: 'Image digest'
+    value: ${{ steps.retag.outputs.digest }}
+  tags:
+    description: 'Retagged tags (comma-separated)'
+    value: ${{ steps.format.outputs.tags-csv }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install crane
+      shell: bash
+      run: |
+        # Install crane for retagging without pulling images
+        curl -sL https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz | tar xz crane
+        sudo mv crane /usr/local/bin/
+        crane version
+
+    - name: Log in to Container Registry
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        USERNAME: ${{ inputs.registry-username || github.actor }}
+        PASSWORD: ${{ inputs.registry-password }}
+      run: |
+        echo "$PASSWORD" | crane auth login "$REGISTRY" -u "$USERNAME" --password-stdin
+
+    - name: Retag image
+      id: retag
+      shell: bash
+      run: |
+        SOURCE_IMAGE="${{ inputs.registry }}/${{ inputs.image-name }}:${{ inputs.source-tag }}"
+
+        echo "Checking source image: $SOURCE_IMAGE"
+
+        # Get digest of source image
+        DIGEST=$(crane digest "$SOURCE_IMAGE")
+        echo "Source digest: $DIGEST"
+        echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+        # Convert target tags to array (handle both comma and newline separated)
+        TAGS_NORMALIZED=$(echo "${{ inputs.target-tags }}" | tr ',\n' ' ')
+
+        echo "Retagging to new tags:"
+        for tag in $TAGS_NORMALIZED; do
+          # Remove any leading/trailing whitespace
+          tag=$(echo "$tag" | xargs)
+          [ -z "$tag" ] && continue
+
+          TARGET_IMAGE="${{ inputs.registry }}/${{ inputs.image-name }}:${tag}"
+          echo "  → $TARGET_IMAGE"
+
+          # Retag using crane (doesn't pull the image)
+          crane tag "$SOURCE_IMAGE" "$tag"
+        done
+
+        echo "✅ Successfully retagged image"
+
+    - name: Format outputs
+      id: format
+      shell: bash
+      run: |
+        # Convert tags to CSV
+        TAGS_CSV=$(echo "${{ inputs.target-tags }}" | tr '\n' ',' | tr -s ',' | sed 's/^,//;s/,$//')
+        echo "tags-csv=$TAGS_CSV" >> $GITHUB_OUTPUT
+
+    - name: Generate summary
+      shell: bash
+      run: |
+        echo "### Image Retagging" >> $GITHUB_STEP_SUMMARY
+        echo "- **Source**: \`${{ inputs.registry }}/${{ inputs.image-name }}:${{ inputs.source-tag }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Digest**: \`${{ steps.retag.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**New Tags:**" >> $GITHUB_STEP_SUMMARY
+
+        TAGS_NORMALIZED=$(echo "${{ inputs.target-tags }}" | tr ',\n' ' ')
+        for tag in $TAGS_NORMALIZED; do
+          tag=$(echo "$tag" | xargs)
+          [ -z "$tag" ] && continue
+          echo "- \`${{ inputs.registry }}/${{ inputs.image-name }}:${tag}\`" >> $GITHUB_STEP_SUMMARY
+        done

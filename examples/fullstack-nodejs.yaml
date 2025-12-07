@@ -1,0 +1,77 @@
+# Example: Full-Stack Node.js Application
+# Use case: Complete CI/CD with testing, building, and deployment to Kubernetes
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop, 'release/**', 'hotfix/**']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        type: choice
+        options:
+          - dev
+          - stg
+          - prd
+        required: false
+
+env:
+  APP_NAME: devportal-api
+  PROJECT: devportal
+  GITOPS_REPO: mrops-br/gitops-devportal
+
+jobs:
+  pipeline:
+    uses: mrops-br/gha-workflows/.github/workflows/_pipeline-nodejs.yaml@main
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      security-events: write
+    secrets: inherit
+    with:
+      # Application configuration
+      app-name: ${{ env.APP_NAME }}
+      project: ${{ env.PROJECT }}
+      gitops-repo: ${{ env.GITOPS_REPO }}
+
+      # Node.js configuration
+      node-version: '20'
+      package-manager: 'npm'  # or 'yarn', 'pnpm'
+
+      # Build configuration
+      working-directory: '.'
+      dockerfile: Dockerfile
+      registry: ghcr.io
+
+      # CI options (all enabled by default)
+      enable-lint: true
+      enable-test: true
+      enable-coverage: true
+
+      # Deployment override (manual trigger only)
+      deploy-environment: ${{ inputs.environment }}
+
+      # Runners
+      ci-runner: 'ubuntu-latest'
+      build-runner: '[shared-runners]'
+
+# Git Flow behavior:
+# develop → Lint, test, build, push (dev-latest), deploy to dev
+# release/1.2.0 → Lint, test, build, push (1.2.0-rc), deploy to stg
+# hotfix/1.2.1 → Lint, test, build, push (1.2.1-hotfix-rc), deploy to stg
+# main → Lint, test, build, push (latest), manual deploy to prd
+# PR → Lint, test, build (validate only, no push/deploy)
+
+# GitOps Integration:
+# After successful build, the workflow updates:
+# gitops-devportal/devportal-api/<env>/kustomization.yaml
+# with the new image tag, then syncs ArgoCD.
+
+# Required secrets (organization level):
+# - ARGOCD_AUTH_TOKEN
+# - ARGOCD_SERVER

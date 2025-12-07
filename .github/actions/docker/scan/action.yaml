@@ -1,0 +1,101 @@
+name: Scan Container Image
+description: Scan container image for vulnerabilities using Trivy
+
+inputs:
+  image-ref:
+    description: 'Image reference (with digest or tag)'
+    required: true
+  severity:
+    description: 'Severity levels to report (comma-separated)'
+    required: false
+    default: 'CRITICAL,HIGH'
+  format:
+    description: 'Output format (table, json, sarif)'
+    required: false
+    default: 'sarif'
+  output-file:
+    description: 'Output file path'
+    required: false
+    default: 'trivy-results.sarif'
+  upload-sarif:
+    description: 'Upload results to GitHub Security'
+    required: false
+    default: 'true'
+  fail-on-error:
+    description: 'Fail the action if vulnerabilities are found'
+    required: false
+    default: 'false'
+  timeout:
+    description: 'Scan timeout (e.g., 10m, 1h)'
+    required: false
+    default: '10m'
+  skip-dirs:
+    description: 'Directories to skip (comma-separated)'
+    required: false
+    default: ''
+  skip-files:
+    description: 'Files to skip (comma-separated)'
+    required: false
+    default: ''
+
+outputs:
+  vulnerabilities-found:
+    description: 'Whether vulnerabilities were found'
+    value: ${{ steps.scan.outputs.vulnerabilities-found }}
+  results-file:
+    description: 'Path to results file'
+    value: ${{ inputs.output-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run Trivy scan
+      id: scan
+      uses: aquasecurity/trivy-action@master
+      continue-on-error: ${{ inputs.fail-on-error == 'false' }}
+      with:
+        image-ref: ${{ inputs.image-ref }}
+        format: ${{ inputs.format }}
+        output: ${{ inputs.output-file }}
+        severity: ${{ inputs.severity }}
+        timeout: ${{ inputs.timeout }}
+        skip-dirs: ${{ inputs.skip-dirs }}
+        skip-files: ${{ inputs.skip-files }}
+
+    - name: Check results
+      shell: bash
+      run: |
+        if [ -f "${{ inputs.output-file }}" ]; then
+          FILE_SIZE=$(stat -f%z "${{ inputs.output-file }}" 2>/dev/null || stat -c%s "${{ inputs.output-file }}" 2>/dev/null)
+          if [ "$FILE_SIZE" -gt 100 ]; then
+            echo "vulnerabilities-found=true" >> $GITHUB_OUTPUT
+            echo "⚠️ Vulnerabilities detected"
+          else
+            echo "vulnerabilities-found=false" >> $GITHUB_OUTPUT
+            echo "✅ No vulnerabilities found"
+          fi
+        else
+          echo "vulnerabilities-found=unknown" >> $GITHUB_OUTPUT
+          echo "⚠️ Scan results file not found"
+        fi
+
+    - name: Upload SARIF results
+      if: inputs.upload-sarif == 'true' && inputs.format == 'sarif'
+      uses: github/codeql-action/upload-sarif@v3
+      continue-on-error: true
+      with:
+        sarif_file: ${{ inputs.output-file }}
+
+    - name: Generate summary
+      shell: bash
+      run: |
+        echo "### Security Scan Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image**: \`${{ inputs.image-ref }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Severity Filter**: ${{ inputs.severity }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Format**: ${{ inputs.format }}" >> $GITHUB_STEP_SUMMARY
+
+        if [ -f "${{ inputs.output-file }}" ]; then
+          echo "- **Results**: Saved to \`${{ inputs.output-file }}\`" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- **Results**: ⚠️ No results file generated" >> $GITHUB_STEP_SUMMARY
+        fi

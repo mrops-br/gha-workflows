@@ -1,0 +1,87 @@
+# Example: Simplified CI/CD Pipeline for Any Application
+# Copy this to your application repo: .github/workflows/pipeline.yaml
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main          # Production (manual deploy only)
+      - develop       # Development (auto-deploy to dev)
+      - 'release/**'  # Staging (auto-deploy to stg)
+      - 'hotfix/**'   # Hotfix (auto-deploy to stg)
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        type: choice
+        options:
+          - dev
+          - stg
+          - prd
+        required: false
+
+# Configuration
+env:
+  APP_NAME: my-app              # Change this to your app name
+  PROJECT: platform              # Change this to your project name
+  GITOPS_REPO: mrops-br/gitops-platform  # Change to your gitops repo
+
+jobs:
+  # For Node.js applications
+  pipeline-nodejs:
+    if: false  # Enable this for Node.js apps
+    uses: mrops-br/gha-workflows/.github/workflows/_pipeline-nodejs.yaml@main
+    with:
+      app-name: ${{ env.APP_NAME }}
+      project: ${{ env.PROJECT }}
+      gitops-repo: ${{ env.GITOPS_REPO }}
+      node-version: '20'
+      package-manager: 'npm'  # or 'yarn', 'pnpm'
+    secrets: inherit
+
+  # For Go applications
+  pipeline-golang:
+    if: false  # Enable this for Go apps
+    uses: mrops-br/gha-workflows/.github/workflows/_pipeline-golang.yaml@main
+    with:
+      app-name: ${{ env.APP_NAME }}
+      project: ${{ env.PROJECT }}
+      gitops-repo: ${{ env.GITOPS_REPO }}
+      go-version: '1.23'
+    secrets: inherit
+
+  # For Python applications
+  pipeline-python:
+    if: false  # Enable this for Python apps
+    uses: mrops-br/gha-workflows/.github/workflows/_pipeline-python.yaml@main
+    with:
+      app-name: ${{ env.APP_NAME }}
+      project: ${{ env.PROJECT }}
+      gitops-repo: ${{ env.GITOPS_REPO }}
+      python-version: '3.12'
+      package-manager: 'pip'  # or 'poetry', 'pipenv'
+    secrets: inherit
+
+  # Custom pipeline (build your own)
+  custom-pipeline:
+    if: true  # Enable this for custom workflows
+    uses: mrops-br/gha-workflows/.github/workflows/_build-docker.yaml@main
+    with:
+      app-name: ${{ env.APP_NAME }}
+    secrets: inherit
+
+# How it works (Git Flow):
+# ──────────────────────────────────────────────────────────────
+# develop branch       → Auto-deploy to DEV   (tag: dev-latest)
+# release/X.Y.Z branch → Auto-deploy to STG   (tag: X.Y.Z-rc)
+# hotfix/X.Y.Z branch  → Auto-deploy to STG   (tag: X.Y.Z-hotfix-rc)
+# main branch          → Manual deploy to PRD (tag: latest, vX.Y.Z)
+# Pull requests        → Build only, no deploy
+#
+# Manual deploy:
+#   gh workflow run pipeline.yaml --ref main -f environment=prd

@@ -1,0 +1,156 @@
+name: CI - Node.js
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '20'
+      package-manager:
+        description: 'Package manager (npm, yarn, pnpm)'
+        required: false
+        type: string
+        default: 'npm'
+      working-directory:
+        description: 'Working directory for commands'
+        required: false
+        type: string
+        default: '.'
+      enable-lint:
+        description: 'Enable linting (runs npm run lint or yarn lint)'
+        required: false
+        type: boolean
+        default: true
+      enable-test:
+        description: 'Enable unit tests'
+        required: false
+        type: boolean
+        default: true
+      enable-coverage:
+        description: 'Enable test coverage reporting'
+        required: false
+        type: boolean
+        default: true
+      enable-security-scan:
+        description: 'Enable security scanning'
+        required: false
+        type: boolean
+        default: true
+      runner:
+        description: 'Runner labels for CI jobs'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    if: inputs.enable-lint
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          case "${{ inputs.package-manager }}" in
+            npm)
+              npm ci
+              ;;
+            yarn)
+              yarn install --frozen-lockfile
+              ;;
+            pnpm)
+              pnpm install --frozen-lockfile
+              ;;
+          esac
+
+      - name: Run lint
+        run: ${{ inputs.package-manager }} run lint
+
+  test:
+    name: Test
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    if: inputs.enable-test
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          case "${{ inputs.package-manager }}" in
+            npm)
+              npm ci
+              ;;
+            yarn)
+              yarn install --frozen-lockfile
+              ;;
+            pnpm)
+              pnpm install --frozen-lockfile
+              ;;
+          esac
+
+      - name: Run tests
+        run: |
+          if [ "${{ inputs.enable-coverage }}" = "true" ]; then
+            ${{ inputs.package-manager }} run test:coverage || ${{ inputs.package-manager }} test -- --coverage
+          else
+            ${{ inputs.package-manager }} test
+          fi
+
+      - name: Upload coverage to GitHub
+        if: inputs.enable-coverage
+        uses: codecov/codecov-action@v5
+        continue-on-error: true
+        with:
+          files: ${{ inputs.working-directory }}/coverage/lcov.info
+          flags: unittests
+          fail_ci_if_error: false
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    if: inputs.enable-security-scan
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: ${{ inputs.working-directory }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
