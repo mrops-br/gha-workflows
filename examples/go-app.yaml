@@ -25,6 +25,11 @@ on:
           - prd
         required: false
 
+# Prevent duplicate runs: cancel in-progress runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   APP_NAME: my-go-app
   PROJECT: platform

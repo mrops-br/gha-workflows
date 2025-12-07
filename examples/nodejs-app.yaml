@@ -25,6 +25,16 @@ on:
           - prd
         required: false
 
+# NOTE: This triggers on both push and pull_request to ensure:
+# - PRs are validated before merge (pull_request trigger)
+# - Direct pushes are validated and deployed (push trigger)
+# The workflow logic handles deployment differently based on event type
+
+# Prevent duplicate runs: cancel in-progress runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   APP_NAME: my-nodejs-app
   PROJECT: devportal

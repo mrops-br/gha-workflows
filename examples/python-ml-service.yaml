@@ -9,6 +9,11 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Prevent duplicate runs: cancel in-progress runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   APP_NAME: ml-inference
   PROJECT: ai-platform
