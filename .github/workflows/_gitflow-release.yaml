@@ -126,7 +126,7 @@ jobs:
       - name: Auto-detect version from commit
         if: inputs.auto-detect-version
         id: auto
-        uses: ./.github/actions/gitflow/detect-version
+        uses: mrops-br/gha-workflows/.github/actions/gitflow/detect-version@main
         with:
           branch: ''
 
@@ -245,7 +245,7 @@ jobs:
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
 
       - name: Retag Docker image
-        uses: ./.github/actions/docker/retag
+        uses: mrops-br/gha-workflows/.github/actions/docker/retag@main
         with:
           registry: ${{ inputs.docker-registry }}
           image-name: ${{ inputs.docker-image-name }}
@@ -255,7 +255,7 @@ jobs:
           registry-password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Sign retagged images
-        uses: ./.github/actions/docker/sign
+        uses: mrops-br/gha-workflows/.github/actions/docker/sign@main
         with:
           image-digest: ${{ steps.retag.outputs.digest }}
           image-tags: ${{ steps.tags.outputs.tags }}

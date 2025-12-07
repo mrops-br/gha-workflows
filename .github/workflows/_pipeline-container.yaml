@@ -226,7 +226,7 @@ jobs:
     if: |
       needs.detect-context.outputs.is-main-merge == 'true' &&
       inputs.enable-auto-release
-    uses: ./.github/workflows/_gitflow-release.yaml
+    uses: mrops-br/gha-workflows/.github/workflows/_gitflow-release.yaml@main
     permissions:
       contents: write
       packages: write

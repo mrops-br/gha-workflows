@@ -77,7 +77,7 @@ jobs:
   # Step 1: CI - Lint, Test, Security Scan
   ci:
     name: CI
-    uses: ./.github/workflows/_ci-python.yaml
+    uses: mrops-br/gha-workflows/.github/workflows/_ci-python.yaml@main
     with:
       python-version: ${{ inputs.python-version }}
       package-manager: ${{ inputs.package-manager }}
@@ -93,7 +93,7 @@ jobs:
   build:
     name: Build
     needs: ci
-    uses: ./.github/workflows/_build-docker.yaml
+    uses: mrops-br/gha-workflows/.github/workflows/_build-docker.yaml@main
     with:
       app-name: ${{ inputs.app-name }}
       context: ${{ inputs.working-directory }}
@@ -157,7 +157,7 @@ jobs:
     name: Deploy to ${{ needs.determine-env.outputs.environment }}
     needs: [build, determine-env]
     if: needs.determine-env.outputs.should-deploy == 'true'
-    uses: ./.github/workflows/_deploy-argocd.yaml
+    uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
     with:
       app-name: ${{ inputs.app-name }}
       project: ${{ inputs.project }}

@@ -105,12 +105,12 @@ jobs:
 
       - name: Detect Git Flow
         id: gitflow
-        uses: ./.github/actions/gitflow/detect-version
+        uses: mrops-br/gha-workflows/.github/actions/gitflow/detect-version@main
 
   # Step 2: CI - Lint, Test, Security Scan
   ci:
     name: CI
-    uses: ./.github/workflows/_ci-nodejs.yaml
+    uses: mrops-br/gha-workflows/.github/workflows/_ci-nodejs.yaml@main
     with:
       node-version: ${{ inputs.node-version }}
       package-manager: ${{ inputs.package-manager }}
@@ -125,7 +125,7 @@ jobs:
   build:
     name: Build
     needs: [detect-gitflow, ci]
-    uses: ./.github/workflows/_build-docker.yaml
+    uses: mrops-br/gha-workflows/.github/workflows/_build-docker.yaml@main
     with:
       app-name: ${{ inputs.app-name }}
       context: ${{ inputs.working-directory }}
@@ -152,14 +152,14 @@ jobs:
 
       - name: Detect environment
         id: env
-        uses: ./.github/actions/gitflow/detect-env
+        uses: mrops-br/gha-workflows/.github/actions/gitflow/detect-env@main
         with:
           branch-type: ${{ needs.detect-gitflow.outputs.branch-type }}
           override-env: ${{ inputs.deploy-environment }}
 
       - name: Determine image tag
         id: tags
-        uses: ./.github/actions/gitflow/generate-tags
+        uses: mrops-br/gha-workflows/.github/actions/gitflow/generate-tags@main
         with:
           branch-type: ${{ needs.detect-gitflow.outputs.branch-type }}
           version: ${{ needs.detect-gitflow.outputs.version }}
@@ -172,7 +172,7 @@ jobs:
     name: Deploy to ${{ needs.determine-env.outputs.environment }}
     needs: [build, determine-env]
     if: needs.determine-env.outputs.should-deploy == 'true'
-    uses: ./.github/workflows/_deploy-argocd.yaml
+    uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
     with:
       app-name: ${{ inputs.app-name }}
       project: ${{ inputs.project }}

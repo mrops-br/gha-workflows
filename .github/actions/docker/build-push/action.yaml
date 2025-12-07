@@ -102,14 +102,14 @@ runs:
     - name: Detect Git Flow tags
       id: gitflow
       if: inputs.tags == ''
-      uses: ./.github/actions/gitflow/detect-version
+      uses: mrops-br/gha-workflows/.github/actions/gitflow/detect-version@main
       with:
         branch: ''
 
     - name: Generate tags with Git Flow
       id: gitflow-tags
       if: inputs.tags == ''
-      uses: ./.github/actions/gitflow/generate-tags
+      uses: mrops-br/gha-workflows/.github/actions/gitflow/generate-tags@main
       with:
         branch-type: ${{ steps.gitflow.outputs.branch-type }}
         version: ${{ steps.gitflow.outputs.version }}
