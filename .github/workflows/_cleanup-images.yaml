@@ -1,0 +1,197 @@
+name: Cleanup Container Images
+description: Cleanup old container images from registry with Git Flow retention policies
+
+on:
+  workflow_call:
+    inputs:
+      # Image configuration
+      image-name:
+        description: 'Image name without registry (e.g., org/app or just app)'
+        required: true
+        type: string
+      package-type:
+        description: 'Package type (container, npm, etc.)'
+        required: false
+        type: string
+        default: 'container'
+      owner:
+        description: 'Package owner (defaults to repository owner)'
+        required: false
+        type: string
+        default: ''
+
+      # General retention
+      min-versions-to-keep:
+        description: 'Minimum total versions to keep across all images'
+        required: false
+        type: number
+        default: 15
+      num-old-versions-to-delete:
+        description: 'Number of old versions to delete (0 = delete all old versions)'
+        required: false
+        type: number
+        default: 0
+
+      # Protected versions (never delete these)
+      protect-semver:
+        description: 'Protect semantic version tags (e.g., 1.2.3, 1.2, 1, latest)'
+        required: false
+        type: boolean
+        default: true
+      protect-rc:
+        description: 'Protect RC versions (e.g., 1.2.3-rc)'
+        required: false
+        type: boolean
+        default: false
+      protect-hotfix-rc:
+        description: 'Protect hotfix RC versions (e.g., 1.2.3-hotfix-rc)'
+        required: false
+        type: boolean
+        default: false
+      protect-dev-latest:
+        description: 'Protect dev-latest tag'
+        required: false
+        type: boolean
+        default: true
+      custom-ignore-pattern:
+        description: 'Additional regex pattern for versions to keep (combined with other protections)'
+        required: false
+        type: string
+        default: ''
+
+      # Cleanup strategies
+      delete-untagged:
+        description: 'Delete untagged images'
+        required: false
+        type: boolean
+        default: true
+      untagged-min-versions:
+        description: 'Minimum untagged versions to keep (usually 0)'
+        required: false
+        type: number
+        default: 0
+
+      # Advanced options
+      dry-run:
+        description: 'Perform a dry run (only log what would be deleted)'
+        required: false
+        type: boolean
+        default: false
+
+      # Runner
+      runner:
+        description: 'Runner to use'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+jobs:
+  cleanup-old-versions:
+    name: Cleanup Old Versions
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Build ignore pattern
+        id: pattern
+        run: |
+          # Start with empty pattern
+          PATTERNS=()
+
+          # Protect semantic versions (X, X.Y, X.Y.Z, latest)
+          if [ "${{ inputs.protect-semver }}" = "true" ]; then
+            PATTERNS+=("^latest$")
+            PATTERNS+=("^[0-9]+$")
+            PATTERNS+=("^[0-9]+\\.[0-9]+$")
+            PATTERNS+=("^[0-9]+\\.[0-9]+\\.[0-9]+$")
+          fi
+
+          # Protect RC versions
+          if [ "${{ inputs.protect-rc }}" = "true" ]; then
+            PATTERNS+=("^[0-9]+\\.[0-9]+\\.[0-9]+-rc$")
+          fi
+
+          # Protect hotfix RC versions
+          if [ "${{ inputs.protect-hotfix-rc }}" = "true" ]; then
+            PATTERNS+=("^[0-9]+\\.[0-9]+\\.[0-9]+-hotfix-rc$")
+          fi
+
+          # Protect dev-latest
+          if [ "${{ inputs.protect-dev-latest }}" = "true" ]; then
+            PATTERNS+=("^dev-latest$")
+          fi
+
+          # Add custom pattern if provided
+          if [ -n "${{ inputs.custom-ignore-pattern }}" ]; then
+            PATTERNS+=("${{ inputs.custom-ignore-pattern }}")
+          fi
+
+          # Combine patterns with OR (|)
+          if [ ${#PATTERNS[@]} -gt 0 ]; then
+            IGNORE_PATTERN=$(IFS='|'; echo "${PATTERNS[*]}")
+          else
+            IGNORE_PATTERN="^$"  # Never match (empty protection)
+          fi
+
+          echo "ignore-pattern=$IGNORE_PATTERN" >> $GITHUB_OUTPUT
+          echo "### Protected Versions Pattern" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$IGNORE_PATTERN" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Cleanup old versions
+        uses: actions/delete-package-versions@v5
+        with:
+          owner: ${{ inputs.owner || github.repository_owner }}
+          package-name: ${{ inputs.image-name }}
+          package-type: ${{ inputs.package-type }}
+          min-versions-to-keep: ${{ inputs.min-versions-to-keep }}
+          num-old-versions-to-delete: ${{ inputs.num-old-versions-to-delete }}
+          ignore-versions: ${{ steps.pattern.outputs.ignore-pattern }}
+          delete-only-untagged-versions: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  cleanup-untagged:
+    name: Cleanup Untagged Images
+    if: inputs.delete-untagged
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Cleanup untagged images
+        uses: actions/delete-package-versions@v5
+        with:
+          owner: ${{ inputs.owner || github.repository_owner }}
+          package-name: ${{ inputs.image-name }}
+          package-type: ${{ inputs.package-type }}
+          min-versions-to-keep: ${{ inputs.untagged-min-versions }}
+          delete-only-untagged-versions: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  summary:
+    name: Cleanup Summary
+    needs: [cleanup-old-versions, cleanup-untagged]
+    if: always()
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 🧹 Image Cleanup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image**: \`${{ inputs.image-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Package Type**: \`${{ inputs.package-type }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Operation | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Cleanup Old Versions | ${{ needs.cleanup-old-versions.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cleanup Untagged | ${{ needs.cleanup-untagged.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Min versions to keep**: ${{ inputs.min-versions-to-keep }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Protect semver**: ${{ inputs.protect-semver }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Protect RC**: ${{ inputs.protect-rc }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Protect hotfix RC**: ${{ inputs.protect-hotfix-rc }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Protect dev-latest**: ${{ inputs.protect-dev-latest }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Delete untagged**: ${{ inputs.delete-untagged }}" >> $GITHUB_STEP_SUMMARY

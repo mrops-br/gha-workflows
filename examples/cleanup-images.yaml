@@ -1,0 +1,186 @@
+# Example: Container Image Cleanup Workflow
+#
+# This workflow demonstrates how to use the reusable cleanup-images workflow
+# to automatically clean up old container images from the registry.
+#
+# NOTE: The actions/delete-package-versions action has limitations:
+# - Cannot filter by age (no "delete images older than X days")
+# - Cannot filter by version pattern (except through ignore-versions)
+# - Works by protecting certain versions and deleting the rest
+#
+# Usage:
+# 1. Copy this file to your repository's .github/workflows/ directory
+# 2. Customize the image-name and protection settings
+# 3. The workflow runs on a schedule (weekly) or manually
+
+name: Cleanup Container Images
+
+on:
+  schedule:
+    # Run weekly on Sunday at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Dry run (preview what would be deleted)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  cleanup:
+    name: Cleanup Images
+    uses: mrops-br/gha-workflows/.github/workflows/_cleanup-images.yaml@main
+    permissions:
+      packages: write
+      contents: read
+    with:
+      # Image configuration
+      image-name: runner-base  # Change to your image name
+
+      # Retention: Keep at least 15 versions total
+      min-versions-to-keep: 15
+
+      # Delete all old versions except protected ones
+      num-old-versions-to-delete: 0  # 0 means delete all old versions
+
+      # Protection: Which versions to NEVER delete
+      protect-semver: true        # Protect: latest, 1, 1.2, 1.2.3
+      protect-rc: false           # Don't protect: 1.2.3-rc (allow cleanup)
+      protect-hotfix-rc: false    # Don't protect: 1.2.3-hotfix-rc (allow cleanup)
+      protect-dev-latest: true    # Protect: dev-latest
+
+      # Also protect dev-* and pr-* tags with custom pattern
+      # This protects recent dev and PR builds
+      custom-ignore-pattern: '^(dev-[0-9a-f]{7}|pr-[0-9]+)$'
+
+      # Cleanup untagged images aggressively
+      delete-untagged: true
+      untagged-min-versions: 0
+
+      # Dry run mode (from workflow_dispatch input)
+      dry-run: ${{ github.event.inputs.dry-run == 'true' }}
+
+# =============================================================================
+# Additional Examples
+# =============================================================================
+
+# Example 1: Minimal Configuration (Conservative - keeps more)
+# -----------------------------------------------------------------------------
+# jobs:
+#   cleanup:
+#     uses: mrops-br/gha-workflows/.github/workflows/_cleanup-images.yaml@main
+#     permissions:
+#       packages: write
+#       contents: read
+#     with:
+#       image-name: my-app
+#       min-versions-to-keep: 20  # Keep at least 20 versions
+#       protect-semver: true       # Protect all semver tags
+
+# Example 2: Aggressive Cleanup (keeps fewer)
+# -----------------------------------------------------------------------------
+# jobs:
+#   cleanup:
+#     uses: mrops-br/gha-workflows/.github/workflows/_cleanup-images.yaml@main
+#     permissions:
+#       packages: write
+#       contents: read
+#     with:
+#       image-name: experimental-app
+#       min-versions-to-keep: 5    # Keep only 5 versions
+#       protect-semver: true        # Still protect stable releases
+#       protect-dev-latest: false   # Don't protect dev-latest
+#       custom-ignore-pattern: ''   # Don't protect anything extra
+
+# Example 3: Protect Everything (safest)
+# -----------------------------------------------------------------------------
+# jobs:
+#   cleanup:
+#     uses: mrops-br/gha-workflows/.github/workflows/_cleanup-images.yaml@main
+#     permissions:
+#       packages: write
+#       contents: read
+#     with:
+#       image-name: critical-service
+#       min-versions-to-keep: 50          # Keep many versions
+#       protect-semver: true              # Protect all semver
+#       protect-rc: true                  # Protect RC too
+#       protect-hotfix-rc: true           # Protect hotfix RC too
+#       protect-dev-latest: true          # Protect dev-latest
+#       custom-ignore-pattern: '^(dev-.*|pr-.*|.*-rc)$'  # Protect dev, PR, and RC tags
+
+# Example 4: Application with Frequent Releases
+# -----------------------------------------------------------------------------
+# jobs:
+#   cleanup:
+#     uses: mrops-br/gha-workflows/.github/workflows/_cleanup-images.yaml@main
+#     permissions:
+#       packages: write
+#       contents: read
+#     with:
+#       image-name: api-service
+#       min-versions-to-keep: 30          # Keep more due to frequent releases
+#       protect-semver: true              # Protect stable versions
+#       protect-rc: false                 # RC can be cleaned
+#       protect-hotfix-rc: false          # Hotfix RC can be cleaned
+#       protect-dev-latest: true          # Keep dev-latest for testing
+#       # Only protect last 3 dev builds and last 2 PRs
+#       custom-ignore-pattern: '^(dev-latest|dev-[0-9a-f]{7}|pr-[0-9]{1,2})$'
+
+# Example 5: Only Cleanup Untagged Images
+# -----------------------------------------------------------------------------
+# jobs:
+#   cleanup:
+#     uses: mrops-br/gha-workflows/.github/workflows/_cleanup-images.yaml@main
+#     permissions:
+#       packages: write
+#       contents: read
+#     with:
+#       image-name: my-app
+#       min-versions-to-keep: 999         # Keep all tagged versions
+#       delete-untagged: true              # Only delete untagged
+#       untagged-min-versions: 0
+
+# =============================================================================
+# Understanding the Workflow
+# =============================================================================
+#
+# How it works:
+# 1. Builds a regex pattern from protection flags
+# 2. Deletes old versions EXCEPT those matching the pattern
+# 3. Keeps at least min-versions-to-keep versions total
+# 4. Separately cleans up untagged images
+#
+# What gets protected by default:
+# - latest                     (semver protection)
+# - X (major version)          (semver protection)
+# - X.Y (minor version)        (semver protection)
+# - X.Y.Z (patch version)      (semver protection)
+# - dev-latest                 (dev-latest protection)
+#
+# What can be cleaned by default:
+# - X.Y.Z-rc                   (unless protect-rc: true)
+# - X.Y.Z-hotfix-rc            (unless protect-hotfix-rc: true)
+# - dev-<sha>                  (unless in custom-ignore-pattern)
+# - pr-<number>                (unless in custom-ignore-pattern)
+# - <sha> (SHA-only tags)      (unless in custom-ignore-pattern)
+# - Untagged images            (if delete-untagged: true)
+#
+# Custom ignore patterns:
+# - Use regex syntax
+# - Combine multiple patterns with | (OR operator)
+# - Example: '^(dev-[0-9a-f]{7}|pr-[0-9]+)$' protects dev-abc1234 and pr-123
+#
+# Limitations:
+# - Cannot specify "delete images older than X days"
+# - Cannot specify "delete only RC tags older than 30 days"
+# - Works by protecting versions and deleting the rest
+# - Age-based cleanup would require a custom script/action
+#
+# Recommendations:
+# 1. Start with dry-run: true to preview deletions
+# 2. Use conservative min-versions-to-keep initially (20-30)
+# 3. Enable all protections first, then relax as needed
+# 4. Monitor the cleanup summary after each run
+# 5. Adjust custom-ignore-pattern based on your tagging strategy

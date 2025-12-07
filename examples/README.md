@@ -89,6 +89,42 @@ This directory contains example workflows demonstrating different use cases and 
 - Hybrid CI/CD workflows
 - Special requirements
 
+### 6. Container Image Cleanup (`cleanup-images.yaml`)
+
+**Use case:** Automated cleanup of old container images from the registry.
+
+**Features:**
+- Protection-based cleanup (specify what to keep, delete the rest)
+- Git Flow-aware protection patterns
+- Separate protections for semver, RC, hotfix RC, and dev-latest
+- Custom regex patterns for additional protection
+- Dry-run mode for testing
+- Scheduled execution (weekly by default)
+- Manual trigger support
+
+**How it works:**
+- Keeps at least N versions (default: 15)
+- Protects specific version patterns (semver, dev-latest, etc.)
+- Deletes old versions that don't match protection patterns
+- Separately cleans up untagged images
+
+**Default protections:**
+- ✅ Semver tags (latest, 1, 1.2, 1.2.3)
+- ✅ dev-latest tag
+- ❌ RC tags (can be cleaned)
+- ❌ Hotfix RC tags (can be cleaned)
+- ❌ dev-<sha> tags (can be cleaned)
+- ❌ pr-<number> tags (can be cleaned)
+- ❌ SHA-only tags (can be cleaned)
+
+**Important:** This workflow uses protection patterns, not age-based deletion. The `actions/delete-package-versions` action doesn't support "delete images older than X days".
+
+**Perfect for:**
+- All repositories with container images
+- Reducing registry storage costs
+- Maintaining clean image inventory
+- Compliance with retention policies
+
 ## Quick Start
 
 1. **Choose an example** that matches your use case
