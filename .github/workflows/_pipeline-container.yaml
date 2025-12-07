@@ -207,6 +207,7 @@ jobs:
         if: needs.detect-context.outputs.should-push == 'true' && inputs.enable-signing
         uses: mrops-br/gha-workflows/.github/actions/docker/sign@main
         with:
+          image-name: ${{ inputs.image-name }}
           image-digest: ${{ steps.build.outputs.digest }}
           image-tags: ${{ steps.build.outputs.tags }}
           registry: ${{ inputs.registry }}

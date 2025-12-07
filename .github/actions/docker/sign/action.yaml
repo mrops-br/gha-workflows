@@ -2,6 +2,9 @@ name: Sign Container Image
 description: Sign container image using cosign with keyless signing (Sigstore)
 
 inputs:
+  image-name:
+    description: 'Full image name (e.g., org/image or just image)'
+    required: true
   image-digest:
     description: 'Image digest (sha256:...)'
     required: true
@@ -40,12 +43,9 @@ runs:
           tag=$(echo "$tag" | xargs)
           [ -z "$tag" ] && continue
 
-          # Add registry if not already present
-          if [[ "$tag" != *"${{ inputs.registry }}"* ]]; then
-            tag="${{ inputs.registry }}/$tag"
-          fi
-
-          images+="${tag}@${DIGEST} "
+          # Construct full image reference: registry/image-name:tag@digest
+          image_ref="${{ inputs.registry }}/${{ inputs.image-name }}:${tag}@${DIGEST}"
+          images+="${image_ref} "
         done
 
         if [ -z "$images" ]; then

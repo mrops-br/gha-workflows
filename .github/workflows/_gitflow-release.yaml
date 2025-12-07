@@ -168,10 +168,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Generate GitHub App token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CICD_APP_ID }}
+          private-key: ${{ secrets.CICD_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          token: ${{ steps.generate-token.outputs.token }}
 
       - name: Generate changelog with git-cliff
         uses: orhun/git-cliff-action@v4
@@ -180,7 +188,7 @@ jobs:
           args: --verbose --tag v${{ needs.detect-version.outputs.version }}
         env:
           OUTPUT: ${{ inputs.changelog-file }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
 
       - name: Commit and push changelog
         run: |
@@ -257,6 +265,7 @@ jobs:
       - name: Sign retagged images
         uses: mrops-br/gha-workflows/.github/actions/docker/sign@main
         with:
+          image-name: ${{ inputs.docker-image-name }}
           image-digest: ${{ steps.retag.outputs.digest }}
           image-tags: ${{ steps.tags.outputs.tags }}
           registry: ${{ inputs.docker-registry }}
@@ -275,10 +284,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Generate GitHub App token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CICD_APP_ID }}
+          private-key: ${{ secrets.CICD_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: main
+          token: ${{ steps.generate-token.outputs.token }}
 
       - name: Create and push tag
         run: |
@@ -347,11 +364,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Generate GitHub App token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CICD_APP_ID }}
+          private-key: ${{ secrets.CICD_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.develop-branch }}
           fetch-depth: 0
+          token: ${{ steps.generate-token.outputs.token }}
 
       - name: Merge main into develop
         run: |

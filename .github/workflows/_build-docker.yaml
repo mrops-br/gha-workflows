@@ -150,6 +150,7 @@ jobs:
         if: inputs.push && inputs.enable-signing
         uses: mrops-br/gha-workflows/.github/actions/docker/sign@main
         with:
+          image-name: ${{ github.repository_owner }}/${{ inputs.app-name }}
           image-digest: ${{ steps.build.outputs.digest }}
           image-tags: ${{ steps.build.outputs.tags }}
           registry: ${{ inputs.registry }}
