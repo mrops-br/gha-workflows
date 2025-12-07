@@ -130,7 +130,7 @@ jobs:
 
       - name: Build and push Docker image
         id: build
-        uses: ./.github/actions/docker/build-push
+        uses: mrops-br/gha-workflows/.github/actions/docker/build-push@main
         with:
           context: ${{ inputs.context }}
           dockerfile: ${{ inputs.dockerfile }}
@@ -148,7 +148,7 @@ jobs:
 
       - name: Sign image
         if: inputs.push && inputs.enable-signing
-        uses: ./.github/actions/docker/sign
+        uses: mrops-br/gha-workflows/.github/actions/docker/sign@main
         with:
           image-digest: ${{ steps.build.outputs.digest }}
           image-tags: ${{ steps.build.outputs.tags }}
@@ -157,7 +157,7 @@ jobs:
       - name: Scan image for vulnerabilities
         if: inputs.push && inputs.enable-scanning
         continue-on-error: ${{ !inputs.scan-fail-on-error }}
-        uses: ./.github/actions/docker/scan
+        uses: mrops-br/gha-workflows/.github/actions/docker/scan@main
         with:
           image-ref: ${{ steps.build.outputs.image-ref }}
           severity: ${{ inputs.scan-severity }}

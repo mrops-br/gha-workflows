@@ -120,3 +120,6 @@ runs:
         echo "- **Type**: $BRANCH_TYPE" >> $GITHUB_STEP_SUMMARY
         [ -n "$VERSION" ] && echo "- **Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
         [ -n "$SOURCE_TAG" ] && echo "- **Source Tag**: $SOURCE_TAG" >> $GITHUB_STEP_SUMMARY
+
+        # Ensure successful exit
+        exit 0

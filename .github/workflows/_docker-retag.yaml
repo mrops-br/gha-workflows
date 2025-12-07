@@ -106,7 +106,7 @@ jobs:
 
       - name: Retag image
         id: retag
-        uses: ./.github/actions/docker/retag
+        uses: mrops-br/gha-workflows/.github/actions/docker/retag@main
         with:
           registry: ${{ inputs.registry }}
           image-name: ${{ inputs.image-name }}
@@ -117,7 +117,7 @@ jobs:
 
       - name: Sign retagged images
         if: inputs.enable-signing
-        uses: ./.github/actions/docker/sign
+        uses: mrops-br/gha-workflows/.github/actions/docker/sign@main
         with:
           image-digest: ${{ steps.retag.outputs.digest }}
           image-tags: ${{ steps.prepare-tags.outputs.final-tags }}
