@@ -8,7 +8,7 @@
 
 [remote.github]
 owner = "mrops-br"
-repo = "gha-runner-images"
+repo = "gha-workflows"
 
 [changelog]
 # Changelog header following Keep a Changelog format
