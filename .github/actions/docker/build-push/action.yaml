@@ -70,10 +70,13 @@ outputs:
     description: 'Image digest'
     value: ${{ steps.build.outputs.digest }}
   tags:
-    description: 'Image tags (newline-separated)'
+    description: 'Image tags only (newline-separated, without registry/image-name prefix)'
+    value: ${{ steps.format.outputs.tags-only }}
+  tags-full:
+    description: 'Full image tags (newline-separated, with registry/image-name prefix)'
     value: ${{ steps.meta.outputs.tags }}
   tags-csv:
-    description: 'Image tags (comma-separated)'
+    description: 'Image tags only (comma-separated, without registry/image-name prefix)'
     value: ${{ steps.format.outputs.tags-csv }}
   image-ref:
     description: 'Full image reference with digest'
@@ -173,8 +176,32 @@ runs:
       id: format
       shell: bash
       run: |
-        # Convert tags to CSV format
-        TAGS_CSV=$(echo "${{ steps.meta.outputs.tags }}" | tr '\n' ',' | sed 's/,$//')
+        # Extract tag values only (remove registry/image-name prefix)
+        # Input: ghcr.io/mrops-br/runner-base:dev-latest
+        # Output: dev-latest
+        REGISTRY="${{ inputs.registry }}"
+        IMAGE_NAME="${{ inputs.image-name }}"
+        PREFIX="${REGISTRY}/${IMAGE_NAME}:"
+
+        TAGS_ONLY=""
+        while IFS= read -r full_tag; do
+          [ -z "$full_tag" ] && continue
+          # Remove prefix to get just the tag
+          tag_only="${full_tag#$PREFIX}"
+          TAGS_ONLY="${TAGS_ONLY}${tag_only}"$'\n'
+        done <<< "${{ steps.meta.outputs.tags }}"
+
+        # Remove trailing newline
+        TAGS_ONLY=$(echo -n "$TAGS_ONLY")
+
+        # Convert to CSV format
+        TAGS_CSV=$(echo "$TAGS_ONLY" | tr '\n' ',' | sed 's/,$//')
+
+        # Output both formats
+        echo "tags-only<<EOF" >> $GITHUB_OUTPUT
+        echo "$TAGS_ONLY" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
         echo "tags-csv=$TAGS_CSV" >> $GITHUB_OUTPUT
 
     - name: Generate build summary
@@ -187,5 +214,5 @@ runs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+        echo "${{ steps.format.outputs.tags-only }}" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
