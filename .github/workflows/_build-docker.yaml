@@ -5,7 +5,7 @@ on:
   workflow_call:
     inputs:
       # Image configuration
-      app-name:
+      image-name:
         description: 'Application name (used for image naming)'
         required: true
         type: string
@@ -90,10 +90,10 @@ on:
 
       # Runner
       runner:
-        description: 'Runner labels'
+        description: 'Runner to use (e.g., ubuntu-latest, shared-runners, or comma-separated labels)'
         required: false
         type: string
-        default: '[shared-runners]'
+        default: 'shared-runners'
 
     outputs:
       image-tags:
@@ -112,7 +112,7 @@ on:
 jobs:
   build:
     name: Build and Push
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
       packages: write
@@ -135,7 +135,7 @@ jobs:
           context: ${{ inputs.context }}
           dockerfile: ${{ inputs.dockerfile }}
           registry: ${{ inputs.registry }}
-          image-name: ${{ github.repository_owner }}/${{ inputs.app-name }}
+          image-name: ${{ inputs.image-name }}
           push: ${{ inputs.push }}
           platforms: ${{ inputs.platforms }}
           build-args: ${{ inputs.build-args }}
@@ -150,7 +150,7 @@ jobs:
         if: inputs.push && inputs.enable-signing
         uses: mrops-br/gha-workflows/.github/actions/docker/sign@main
         with:
-          image-name: ${{ github.repository_owner }}/${{ inputs.app-name }}
+          image-name: ${{ inputs.image-name }}
           image-digest: ${{ steps.build.outputs.digest }}
           image-tags: ${{ steps.build.outputs.tags }}
           registry: ${{ inputs.registry }}

@@ -52,7 +52,7 @@ on:
 jobs:
   lint:
     name: Lint
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     if: inputs.enable-lint
     container: ${{ inputs.container-image != '' && inputs.container-image || null }}
     defaults:
@@ -71,7 +71,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     if: inputs.enable-test
     container: ${{ inputs.container-image != '' && inputs.container-image || null }}
     defaults:

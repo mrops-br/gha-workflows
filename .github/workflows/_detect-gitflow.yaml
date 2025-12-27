@@ -1,0 +1,58 @@
+name: Detect Git Flow Context
+description: Detects Git Flow branch type, version, and deployment strategy
+
+on:
+  workflow_call:
+    inputs:
+      fetch-depth:
+        description: 'Number of commits to fetch for version detection'
+        required: false
+        type: number
+        default: 10
+      runner:
+        description: 'Runner to use for detection'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+    outputs:
+      branch-type:
+        description: 'Detected branch type (feature, release, hotfix, develop, main)'
+        value: ${{ jobs.detect.outputs.branch-type }}
+      version:
+        description: 'Detected version (if applicable)'
+        value: ${{ jobs.detect.outputs.version }}
+      source-tag:
+        description: 'Source tag for version (if applicable)'
+        value: ${{ jobs.detect.outputs.source-tag }}
+      should-push:
+        description: 'Whether to push container images'
+        value: ${{ jobs.detect.outputs.should-push }}
+      is-main-merge:
+        description: 'Whether this is a merge to main branch'
+        value: ${{ jobs.detect.outputs.is-main-merge }}
+
+jobs:
+  detect:
+    name: Detect Context
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      branch-type: ${{ steps.gitflow.outputs.branch-type }}
+      version: ${{ steps.gitflow.outputs.version }}
+      source-tag: ${{ steps.gitflow.outputs.source-tag }}
+      should-push: ${{ steps.push.outputs.should-push }}
+      is-main-merge: ${{ steps.push.outputs.is-main-merge }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Detect Git Flow
+        id: gitflow
+        uses: mrops-br/gha-workflows/.github/actions/gitflow/detect-version@main
+
+      - name: Determine push strategy
+        id: push
+        uses: mrops-br/gha-workflows/.github/actions/gitflow/determine-push@main
+        with:
+          branch-type: ${{ steps.gitflow.outputs.branch-type }}

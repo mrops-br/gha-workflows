@@ -60,11 +60,31 @@ on:
         required: false
         type: boolean
         default: true
+      enable-lint-dockerfile:
+        description: 'Enable Dockerfile linting'
+        required: false
+        type: boolean
+        default: true
+      dockerfile-failure-threshold:
+        description: 'Dockerfile lint failure threshold'
+        required: false
+        type: string
+        default: 'warning'
       deploy-environment:
         description: 'Environment to deploy (auto-detected if not set)'
         required: false
         type: string
         default: ''
+      lint-runner:
+        description: 'Runner for lint and CI jobs'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      build-runner:
+        description: 'Runner for build and deploy jobs'
+        required: false
+        type: string
+        default: 'shared-runners'
     secrets:
       argocd-auth-token:
         description: 'ArgoCD authentication token'
@@ -74,7 +94,22 @@ on:
         required: true
 
 jobs:
-  # Step 1: CI - Lint, Test, Security Scan
+  # Step 1: Lint Dockerfile
+  lint:
+    name: Lint Dockerfile
+    if: inputs.enable-lint-dockerfile
+    runs-on: ${{ inputs.lint-runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Lint Dockerfile
+        uses: mrops-br/gha-workflows/.github/actions/quality/lint-dockerfile@main
+        with:
+          dockerfile: ${{ inputs.dockerfile }}
+          failure-threshold: ${{ inputs.dockerfile-failure-threshold }}
+
+  # Step 2: CI - Lint, Test, Security Scan
   ci:
     name: CI
     uses: mrops-br/gha-workflows/.github/workflows/_ci-python.yaml@main
@@ -87,24 +122,28 @@ jobs:
       enable-test: ${{ inputs.enable-test }}
       enable-coverage: ${{ inputs.enable-coverage }}
       enable-security-scan: true
-      runner: 'ubuntu-latest'
+      runner: ${{ inputs.lint-runner }}
 
-  # Step 2: Build Docker Image
+  # Step 3: Build Docker Image
   build:
     name: Build
-    needs: ci
+    needs: [lint, ci]
+    if: |
+      always() &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      needs.ci.result == 'success'
     uses: mrops-br/gha-workflows/.github/workflows/_build-docker.yaml@main
     with:
-      app-name: ${{ inputs.app-name }}
+      image-name: ${{ github.repository_owner }}/${{ inputs.app-name }}
       context: ${{ inputs.working-directory }}
       dockerfile: ${{ inputs.dockerfile }}
       registry: ${{ inputs.registry }}
       platforms: 'linux/amd64'
       push: ${{ github.event_name != 'pull_request' }}
-      runner: '[shared-runners]'
+      runner: ${{ inputs.build-runner }}
     secrets: inherit
 
-  # Step 3: Determine environment
+  # Step 4: Determine environment
   determine-env:
     name: Determine Environment
     runs-on: ubuntu-latest
@@ -152,7 +191,7 @@ jobs:
           echo "Should Deploy: $SHOULD_DEPLOY"
           echo "Image Tag: $IMAGE_TAG"
 
-  # Step 4: Deploy to Environment
+  # Step 5: Deploy to Environment
   deploy:
     name: Deploy to ${{ needs.determine-env.outputs.environment }}
     needs: [build, determine-env]
@@ -160,13 +199,14 @@ jobs:
     uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
     with:
       app-name: ${{ inputs.app-name }}
+      image-name: ${{ github.repository_owner }}/${{ inputs.app-name }}
       project: ${{ inputs.project }}
       environment: ${{ needs.determine-env.outputs.environment }}
       gitops-repo: ${{ inputs.gitops-repo }}
       image-tag: ${{ needs.determine-env.outputs.image-tag }}
       registry: ${{ inputs.registry }}
       wait-for-sync: true
-      runner: '[shared-runners]'
+      runner: ${{ inputs.build-runner }}
     secrets:
       argocd-auth-token: ${{ secrets.argocd-auth-token }}
       argocd-server: ${{ secrets.argocd-server }}
