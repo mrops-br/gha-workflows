@@ -4,7 +4,11 @@ on:
   workflow_call:
     inputs:
       app-name:
-        description: 'Application name'
+        description: 'Application name (used for GitOps paths and ArgoCD app names)'
+        required: true
+        type: string
+      image-name:
+        description: 'Full image name including owner (e.g., org/app-name)'
         required: true
         type: string
       project:
@@ -39,10 +43,10 @@ on:
         type: boolean
         default: true
       runner:
-        description: 'Runner labels'
+        description: 'Runner to use'
         required: false
         type: string
-        default: '[shared-runners]'
+        default: 'shared-runners'
     secrets:
       argocd-auth-token:
         description: 'ArgoCD authentication token'
@@ -54,7 +58,7 @@ on:
 jobs:
   update-gitops:
     name: Update GitOps Repo
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     container:
       image: ghcr.io/mrops-br/runner-base:latest
       credentials:
@@ -71,13 +75,13 @@ jobs:
         with:
           gitops-repo: ${{ inputs.gitops-repo }}
           app-path: ${{ inputs.app-name }}/${{ inputs.environment }}
-          image: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.app-name }}
+          image: ${{ inputs.registry }}/${{ inputs.image-name }}
           image-tag: ${{ inputs.image-tag }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
   sync-argocd:
     name: Sync ArgoCD
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     container:
       image: ghcr.io/mrops-br/runner-base:latest
       credentials:
@@ -118,7 +122,7 @@ jobs:
           if [[ "${{ needs.update-gitops.result }}" == "success" && "${{ needs.sync-argocd.result }}" == "success" ]]; then
             echo "✅ Deployment completed successfully!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Deployed Image:** \`${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.app-name }}:${{ inputs.image-tag }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Deployed Image:** \`${{ inputs.registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}\`" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ Deployment failed. Check logs above." >> $GITHUB_STEP_SUMMARY
             exit 1

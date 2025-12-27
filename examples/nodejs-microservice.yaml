@@ -63,7 +63,7 @@ jobs:
 
       # Runners
       ci-runner: 'ubuntu-latest'
-      build-runner: '[shared-runners]'
+      build-runner: 'shared-runners'
 
 # Git Flow behavior:
 # develop → Lint, test, build, push (dev-latest), deploy to dev

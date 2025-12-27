@@ -113,8 +113,10 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: mrops-br/gha-workflows/.github/actions/docker/sign@main
         with:
+          image-name: ${{ github.repository_owner }}/${{ env.APP_NAME }}
           image-digest: ${{ steps.build.outputs.digest }}
           image-tags: ${{ steps.build.outputs.tags }}
+          registry: ghcr.io
 
       - name: Scan for vulnerabilities
         if: github.event_name != 'pull_request'

@@ -78,10 +78,10 @@ on:
         type: string
         default: 'ubuntu-latest'
       build-runner:
-        description: 'Runner for build jobs'
+        description: 'Runner for build and deploy jobs'
         required: false
         type: string
-        default: '[shared-runners]'
+        default: 'shared-runners'
 
     secrets:
       argocd-auth-token:
@@ -127,7 +127,7 @@ jobs:
     needs: [detect-gitflow, ci]
     uses: mrops-br/gha-workflows/.github/workflows/_build-docker.yaml@main
     with:
-      app-name: ${{ inputs.app-name }}
+      image-name: ${{ github.repository_owner }}/${{ inputs.app-name }}
       context: ${{ inputs.working-directory }}
       dockerfile: ${{ inputs.dockerfile }}
       registry: ${{ inputs.registry }}
@@ -175,6 +175,7 @@ jobs:
     uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
     with:
       app-name: ${{ inputs.app-name }}
+      image-name: ${{ github.repository_owner }}/${{ inputs.app-name }}
       project: ${{ inputs.project }}
       environment: ${{ needs.determine-env.outputs.environment }}
       gitops-repo: ${{ inputs.gitops-repo }}

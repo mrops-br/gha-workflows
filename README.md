@@ -332,7 +332,7 @@ jobs:
   ci:
     uses: ./_ci.yaml@main
     with:
-      runner: '[shared-runners]'
+      runner: 'shared-runners'
       lint-command: 'npm run lint'
       test-command: 'npm test'
       setup-command: 'npm ci'

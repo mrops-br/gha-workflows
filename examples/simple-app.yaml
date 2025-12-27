@@ -79,7 +79,7 @@ jobs:
     if: true  # Enable this for custom workflows
     uses: mrops-br/gha-workflows/.github/workflows/_build-docker.yaml@main
     with:
-      app-name: ${{ env.APP_NAME }}
+      image-name: ${{ github.repository_owner }}/${{ env.APP_NAME }}
     secrets: inherit
 
 # How it works (Git Flow):

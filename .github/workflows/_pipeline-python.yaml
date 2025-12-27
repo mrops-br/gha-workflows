@@ -65,6 +65,11 @@ on:
         required: false
         type: string
         default: ''
+      build-runner:
+        description: 'Runner for build and deploy jobs'
+        required: false
+        type: string
+        default: 'shared-runners'
     secrets:
       argocd-auth-token:
         description: 'ArgoCD authentication token'
@@ -101,7 +106,7 @@ jobs:
       registry: ${{ inputs.registry }}
       platforms: 'linux/amd64'
       push: ${{ github.event_name != 'pull_request' }}
-      runner: '[shared-runners]'
+      runner: ${{ inputs.build-runner }}
     secrets: inherit
 
   # Step 3: Determine environment
@@ -160,13 +165,14 @@ jobs:
     uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
     with:
       app-name: ${{ inputs.app-name }}
+      image-name: ${{ github.repository_owner }}/${{ inputs.app-name }}
       project: ${{ inputs.project }}
       environment: ${{ needs.determine-env.outputs.environment }}
       gitops-repo: ${{ inputs.gitops-repo }}
       image-tag: ${{ needs.determine-env.outputs.image-tag }}
       registry: ${{ inputs.registry }}
       wait-for-sync: true
-      runner: '[shared-runners]'
+      runner: ${{ inputs.build-runner }}
     secrets:
       argocd-auth-token: ${{ secrets.argocd-auth-token }}
       argocd-server: ${{ secrets.argocd-server }}
