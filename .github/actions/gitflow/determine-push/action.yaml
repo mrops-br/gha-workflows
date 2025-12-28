@@ -1,0 +1,67 @@
+name: Determine Push Strategy
+description: Determines when to push images and detect main merges based on Git Flow
+
+inputs:
+  branch-type:
+    description: 'Branch type from gitflow/detect-version (develop, release, hotfix, main, feature, etc.)'
+    required: true
+
+outputs:
+  should-push:
+    description: 'Whether to push the built image (true/false)'
+    value: ${{ steps.push.outputs.should-push }}
+  is-main-merge:
+    description: 'Whether this is a merge to main branch (true/false)'
+    value: ${{ steps.push.outputs.is-main-merge }}
+
+runs:
+  using: composite
+  steps:
+    - name: Determine push strategy
+      id: push
+      shell: bash
+      run: |
+        # Push on:
+        # - develop branch pushes
+        # - release/* or hotfix/* branch pushes
+        # - PRs to main from release/* or hotfix/* branches (build RC images)
+        # Don't push on:
+        # - PRs to develop (just validate)
+        # - PRs to main from other branches
+        # - Other branches
+
+        SHOULD_PUSH="false"
+        IS_MAIN_MERGE="false"
+
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          # Check if PR is targeting main and source is release/* or hotfix/*
+          if [[ "${{ github.base_ref }}" == "main" ]] && [[ "${{ inputs.branch-type }}" =~ ^(release|hotfix)$ ]]; then
+            SHOULD_PUSH="true"
+            echo "✅ PR to main from ${{ github.head_ref }} - will build and push RC image"
+          else
+            SHOULD_PUSH="false"
+            echo "ℹ️ PR validation only - will not push image"
+          fi
+        elif [[ "${{ github.ref_name }}" == "main" ]]; then
+          IS_MAIN_MERGE="true"
+          # Main pushes trigger release workflow, not build
+          SHOULD_PUSH="false"
+          echo "ℹ️ Main branch - will trigger release workflow"
+        elif [[ "${{ github.ref_name }}" == "develop" ]] || [[ "${{ inputs.branch-type }}" =~ ^(release|hotfix)$ ]]; then
+          SHOULD_PUSH="true"
+          echo "✅ Push to ${{ github.ref_name }} - will build and push image"
+        else
+          SHOULD_PUSH="false"
+          echo "ℹ️ Other branch - build only, no push"
+        fi
+
+        echo "should-push=$SHOULD_PUSH" >> $GITHUB_OUTPUT
+        echo "is-main-merge=$IS_MAIN_MERGE" >> $GITHUB_OUTPUT
+
+        echo ""
+        echo "📊 Push Strategy Decision:"
+        echo "  Event: ${{ github.event_name }}"
+        echo "  Branch: ${{ github.ref_name }}"
+        echo "  Branch Type: ${{ inputs.branch-type }}"
+        echo "  Should Push: $SHOULD_PUSH"
+        echo "  Is Main Merge: $IS_MAIN_MERGE"

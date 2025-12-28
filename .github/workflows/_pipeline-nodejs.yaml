@@ -9,12 +9,12 @@ on:
         description: 'Application name'
         required: true
         type: string
-      project:
-        description: 'Project name (e.g., devportal)'
+      image-name:
+        description: 'Full container image name (e.g., org/app-name)'
         required: true
         type: string
-      gitops-repo:
-        description: 'GitOps repository (e.g., org/gitops-devportal)'
+      project-name:
+        description: 'Project name (e.g., devportal)'
         required: true
         type: string
 
@@ -63,6 +63,16 @@ on:
         required: false
         type: boolean
         default: true
+      enable-lint-dockerfile:
+        description: 'Enable Dockerfile linting'
+        required: false
+        type: boolean
+        default: true
+      dockerfile-failure-threshold:
+        description: 'Dockerfile lint failure threshold'
+        required: false
+        type: string
+        default: 'warning'
 
       # Deployment override
       deploy-environment:
@@ -72,42 +82,55 @@ on:
         default: ''
 
       # Runners
-      ci-runner:
-        description: 'Runner for CI jobs'
+      lint-runner:
+        description: 'Runner for lint and CI jobs'
         required: false
         type: string
         default: 'ubuntu-latest'
       build-runner:
-        description: 'Runner for build jobs'
+        description: 'Runner for build and deploy jobs'
         required: false
         type: string
-        default: '[shared-runners]'
+        default: 'shared-runners'
 
     secrets:
-      argocd-auth-token:
+      ARGOCD_AUTH_TOKEN:
         description: 'ArgoCD authentication token'
         required: false
-      argocd-server:
+      ARGOCD_SERVER:
         description: 'ArgoCD server URL'
+        required: false
+      CICD_USERNAME:
+        description: 'Container registry username for pulling runner image'
+        required: false
+      CICD_TOKEN:
+        description: 'Container registry token for pulling runner image'
         required: false
 
 jobs:
-  # Step 1: Detect Git Flow context
-  detect-gitflow:
-    name: Detect Git Flow
-    runs-on: ubuntu-latest
-    outputs:
-      branch-type: ${{ steps.gitflow.outputs.branch-type }}
-      version: ${{ steps.gitflow.outputs.version }}
+  # Step 1: Lint Dockerfile
+  lint:
+    name: Lint Dockerfile
+    if: inputs.enable-lint-dockerfile
+    runs-on: ${{ inputs.lint-runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Detect Git Flow
-        id: gitflow
-        uses: mrops-br/gha-workflows/.github/actions/gitflow/detect-version@main
+      - name: Lint Dockerfile
+        uses: mrops-br/gha-workflows/.github/actions/quality/lint-dockerfile@main
+        with:
+          dockerfile: ${{ inputs.dockerfile }}
+          failure-threshold: ${{ inputs.dockerfile-failure-threshold }}
 
-  # Step 2: CI - Lint, Test, Security Scan
+  # Step 2: Detect Git Flow context
+  detect-gitflow:
+    name: Detect Git Flow
+    uses: mrops-br/gha-workflows/.github/workflows/_detect-gitflow.yaml@main
+    with:
+      runner: ubuntu-latest
+
+  # Step 3: CI - Lint, Test, Security Scan
   ci:
     name: CI
     uses: mrops-br/gha-workflows/.github/workflows/_ci-nodejs.yaml@main
@@ -119,15 +142,19 @@ jobs:
       enable-test: ${{ inputs.enable-test }}
       enable-coverage: ${{ inputs.enable-coverage }}
       enable-security-scan: true
-      runner: ${{ inputs.ci-runner }}
+      runner: ${{ inputs.lint-runner }}
 
-  # Step 3: Build Docker Image
+  # Step 4: Build Docker Image
   build:
     name: Build
-    needs: [detect-gitflow, ci]
+    needs: [lint, detect-gitflow, ci]
+    if: |
+      always() &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      needs.ci.result == 'success'
     uses: mrops-br/gha-workflows/.github/workflows/_build-docker.yaml@main
     with:
-      app-name: ${{ inputs.app-name }}
+      image-name: ${{ inputs.image-name }}
       context: ${{ inputs.working-directory }}
       dockerfile: ${{ inputs.dockerfile }}
       registry: ${{ inputs.registry }}
@@ -136,7 +163,7 @@ jobs:
       runner: ${{ inputs.build-runner }}
     secrets: inherit
 
-  # Step 4: Determine deployment environment
+  # Step 5: Determine deployment environment
   determine-env:
     name: Determine Environment
     needs: [detect-gitflow, build]
@@ -167,7 +194,7 @@ jobs:
           event-name: ${{ github.event_name }}
           pr-number: ${{ github.event.pull_request.number }}
 
-  # Step 5: Deploy to Environment
+  # Step 6: Deploy to Environment
   deploy:
     name: Deploy to ${{ needs.determine-env.outputs.environment }}
     needs: [build, determine-env]
@@ -175,21 +202,24 @@ jobs:
     uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
     with:
       app-name: ${{ inputs.app-name }}
-      project: ${{ inputs.project }}
+      argocd-app-name: ${{ inputs.project-name }}-${{ needs.determine-env.outputs.environment }}-${{ inputs.app-name }}
+      image-name: ${{ inputs.image-name }}
       environment: ${{ needs.determine-env.outputs.environment }}
-      gitops-repo: ${{ inputs.gitops-repo }}
+      gitops-repo: ${{ github.repository_owner }}/gitops-${{ inputs.project-name }}
       image-tag: ${{ needs.determine-env.outputs.image-tag }}
       registry: ${{ inputs.registry }}
       wait-for-sync: true
       runner: ${{ inputs.build-runner }}
     secrets:
-      argocd-auth-token: ${{ secrets.argocd-auth-token }}
-      argocd-server: ${{ secrets.argocd-server }}
+      ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+      ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+      CICD_USERNAME: ${{ secrets.CICD_USERNAME }}
+      CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
 
   # Summary
   summary:
     name: Pipeline Summary
-    needs: [detect-gitflow, ci, build, determine-env, deploy]
+    needs: [lint, detect-gitflow, ci, build, determine-env, deploy]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -203,6 +233,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| CI | ${{ needs.ci.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Deploy | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY

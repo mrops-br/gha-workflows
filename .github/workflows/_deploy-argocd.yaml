@@ -4,11 +4,11 @@ on:
   workflow_call:
     inputs:
       app-name:
-        description: 'Application name'
+        description: 'Application name (used for GitOps paths and ArgoCD app names)'
         required: true
         type: string
-      project:
-        description: 'Project name (e.g., devportal)'
+      image-name:
+        description: 'Full image name including owner (e.g., org/app-name)'
         required: true
         type: string
       environment:
@@ -39,60 +39,64 @@ on:
         type: boolean
         default: true
       runner:
-        description: 'Runner labels'
+        description: 'Runner to use'
         required: false
         type: string
-        default: '[shared-runners]'
+        default: 'shared-runners'
     secrets:
-      argocd-auth-token:
+      ARGOCD_AUTH_TOKEN:
         description: 'ArgoCD authentication token'
         required: true
-      argocd-server:
+      ARGOCD_SERVER:
         description: 'ArgoCD server URL'
+        required: true
+      CICD_USERNAME:
+        description: 'Container registry username for pulling runner image'
+        required: true
+      CICD_TOKEN:
+        description: 'Container registry token for pulling runner image'
         required: true
 
 jobs:
   update-gitops:
     name: Update GitOps Repo
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     container:
       image: ghcr.io/mrops-br/runner-base:latest
       credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+        username: ${{ secrets.CICD_USERNAME }}
+        password: ${{ secrets.CICD_TOKEN }}
     permissions:
       contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
       - name: Update GitOps repository
         uses: mrops-br/gha-workflows/.github/actions/gitops-update@main
         with:
           gitops-repo: ${{ inputs.gitops-repo }}
-          app-path: ${{ inputs.app-name }}/${{ inputs.environment }}
-          image: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.app-name }}
+          app-path: ${{ inputs.app-name }}/overlays/${{ inputs.environment }}
+          image: ${{ inputs.registry }}/${{ inputs.image-name }}
           image-tag: ${{ inputs.image-tag }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.CICD_TOKEN }}
 
   sync-argocd:
     name: Sync ArgoCD
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment == 'dev' && 'development' || inputs.environment == 'stg' && 'staging' || 'production' }}
     container:
       image: ghcr.io/mrops-br/runner-base:latest
       credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+        username: ${{ secrets.CICD_USERNAME }}
+        password: ${{ secrets.CICD_TOKEN }}
     needs: update-gitops
     steps:
       - name: Sync ArgoCD application
         uses: mrops-br/gha-workflows/.github/actions/argocd-sync@main
         with:
-          argocd-server: ${{ secrets.argocd-server }}
-          argocd-token: ${{ secrets.argocd-auth-token }}
+          argocd-server: ${{ secrets.ARGOCD_SERVER }}
+          argocd-token: ${{ secrets.ARGOCD_AUTH_TOKEN }}
           app-name: ${{ inputs.argocd-app-name != '' && inputs.argocd-app-name || format('{0}-{1}', inputs.app-name, inputs.environment) }}
           wait: ${{ inputs.wait-for-sync }}
-          timeout: '10m'
+          timeout: '600'
 
   summary:
     name: Deployment Summary
@@ -118,7 +122,7 @@ jobs:
           if [[ "${{ needs.update-gitops.result }}" == "success" && "${{ needs.sync-argocd.result }}" == "success" ]]; then
             echo "✅ Deployment completed successfully!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Deployed Image:** \`${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.app-name }}:${{ inputs.image-tag }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Deployed Image:** \`${{ inputs.registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}\`" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ Deployment failed. Check logs above." >> $GITHUB_STEP_SUMMARY
             exit 1

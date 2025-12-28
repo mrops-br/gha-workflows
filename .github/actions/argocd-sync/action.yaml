@@ -16,9 +16,9 @@ inputs:
     required: false
     default: 'true'
   timeout:
-    description: 'Timeout for waiting (e.g., 5m)'
+    description: 'Timeout for waiting in seconds'
     required: false
-    default: '5m'
+    default: '300'
   prune:
     description: 'Prune resources during sync'
     required: false
@@ -41,22 +41,31 @@ runs:
         fi
         argocd version --client
 
-    - name: Login to ArgoCD
+    - name: Verify ArgoCD Credentials
       shell: bash
       env:
         ARGOCD_SERVER: ${{ inputs.argocd-server }}
         ARGOCD_AUTH_TOKEN: ${{ inputs.argocd-token }}
+        ARGOCD_OPTS: "--plaintext"
       run: |
-        argocd login $ARGOCD_SERVER \
-          --auth-token=$ARGOCD_AUTH_TOKEN \
-          --grpc-web
+        # Validate ArgoCD Server variable and verify credentials
+        if [ -z "$ARGOCD_SERVER" ]; then
+          echo "ERROR: ARGOCD_SERVER is empty"
+          exit 1
+        fi
+
+        # Verify credentials with gRPC-web
+        echo "Verifying ArgoCD credentials..."
+        argocd account get-user-info
 
     - name: Sync application
       shell: bash
       env:
         ARGOCD_SERVER: ${{ inputs.argocd-server }}
         ARGOCD_AUTH_TOKEN: ${{ inputs.argocd-token }}
+        ARGOCD_OPTS: "--plaintext"
       run: |
+        # Sync ArgoCD Application
         SYNC_ARGS=""
         if [[ "${{ inputs.prune }}" == "true" ]]; then
           SYNC_ARGS="--prune"
@@ -71,7 +80,9 @@ runs:
       env:
         ARGOCD_SERVER: ${{ inputs.argocd-server }}
         ARGOCD_AUTH_TOKEN: ${{ inputs.argocd-token }}
+        ARGOCD_OPTS: "--plaintext"
       run: |
+        # Wait ArgoCD Application sync to finish
         echo "Waiting for sync to complete (timeout: ${{ inputs.timeout }})..."
         argocd app wait ${{ inputs.app-name }} \
           --health \
@@ -85,6 +96,8 @@ runs:
       env:
         ARGOCD_SERVER: ${{ inputs.argocd-server }}
         ARGOCD_AUTH_TOKEN: ${{ inputs.argocd-token }}
+        ARGOCD_OPTS: "--plaintext"
       run: |
+        # Get ArgoCD Application status after sync
         echo "Application status:"
         argocd app get ${{ inputs.app-name }}

@@ -52,7 +52,7 @@ on:
 jobs:
   lint:
     name: Lint
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     if: inputs.enable-lint
     defaults:
       run:
@@ -99,7 +99,7 @@ jobs:
 
   type-check:
     name: Type Check
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     if: inputs.enable-type-check
     defaults:
       run:
@@ -140,7 +140,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     if: inputs.enable-test
     defaults:
       run:

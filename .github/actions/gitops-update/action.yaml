@@ -53,7 +53,7 @@ runs:
         fi
 
         # Update kustomization.yaml with new image
-        if ! kustomize edit set image ${{ inputs.image }}=${{ inputs.image }}:${{ inputs.image-tag }}; then
+        if ! kustomize edit set image IMAGE=${{ inputs.image }}:${{ inputs.image-tag }}; then
           echo "❌ Failed to update kustomization.yaml"
           echo "Current kustomization.yaml:"
           cat kustomization.yaml
@@ -74,7 +74,7 @@ runs:
         fi
 
         git add ${{ inputs.app-path }}/kustomization.yaml
-        git commit -m "chore: update ${{ inputs.app-path }} image to ${{ inputs.image-tag }}
+        git commit -m "bump(${{ inputs.app-path }}): update image to ${{ inputs.image-tag }}
 
         Image: ${{ inputs.image }}:${{ inputs.image-tag }}
         Triggered by: ${{ github.repository }}@${{ github.sha }}

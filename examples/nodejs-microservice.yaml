@@ -26,8 +26,8 @@ concurrency:
 
 env:
   APP_NAME: devportal-api
-  PROJECT: devportal
-  GITOPS_REPO: mrops-br/gitops-devportal
+  IMAGE_NAME: mrops-br/devportal-api
+  PROJECT_NAME: devportal
 
 jobs:
   build-and-deploy:
@@ -41,8 +41,8 @@ jobs:
     with:
       # Application configuration
       app-name: ${{ env.APP_NAME }}
-      project: ${{ env.PROJECT }}
-      gitops-repo: ${{ env.GITOPS_REPO }}
+      image-name: ${{ env.IMAGE_NAME }}
+      project-name: ${{ env.PROJECT_NAME }}
 
       # Node.js configuration
       node-version: '20'
@@ -63,7 +63,7 @@ jobs:
 
       # Runners
       ci-runner: 'ubuntu-latest'
-      build-runner: '[shared-runners]'
+      build-runner: 'shared-runners'
 
 # Git Flow behavior:
 # develop → Lint, test, build, push (dev-latest), deploy to dev
@@ -74,9 +74,11 @@ jobs:
 
 # GitOps Integration:
 # After successful build, the workflow updates:
-# gitops-devportal/devportal-api/<env>/kustomization.yaml
+# gitops-devportal/devportal-api/overlays/<env>/kustomization.yaml
 # with the new image tag, then syncs ArgoCD.
 
 # Required secrets (organization level):
-# - ARGOCD_AUTH_TOKEN
-# - ARGOCD_SERVER
+# - ARGOCD_AUTH_TOKEN - ArgoCD API token
+# - ARGOCD_SERVER - ArgoCD server URL (e.g., argocd.example.com)
+# - CICD_USERNAME - Container registry username (GitHub username or org)
+# - CICD_TOKEN - Container registry PAT with read:packages scope

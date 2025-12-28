@@ -1,13 +1,19 @@
 # Example: Go Microservice
-# Use case: Go backend service with comprehensive testing and deployment
+# Use case: Go backend service with comprehensive testing, deployment, and releases
 
-name: CI
+name: CI/CD Pipeline
 
 on:
   push:
     branches: [main, develop, 'release/**', 'hotfix/**']
   pull_request:
     branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        type: choice
+        options: [dev, stg, prd]
 
 # Prevent duplicate runs: cancel in-progress runs when new commits are pushed
 concurrency:
@@ -16,53 +22,80 @@ concurrency:
 
 env:
   APP_NAME: auth-service
-  PROJECT: platform
-  GITOPS_REPO: mrops-br/gitops-platform
+  IMAGE_NAME: mrops-br/auth-service
+  PROJECT_NAME: platform
 
 jobs:
-  build-and-deploy:
-    name: Build & Deploy
+  pipeline:
+    name: CI/CD Pipeline
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-golang.yaml@main
     permissions:
-      contents: read
-      packages: write
-      id-token: write
-      security-events: write
+      contents: write       # For creating tags and releases
+      packages: write       # For pushing to GHCR
+      id-token: write      # For cosign signing
+      security-events: write  # For vulnerability scanning
     secrets: inherit
     with:
+      # Application configuration
       app-name: ${{ env.APP_NAME }}
-      project: ${{ env.PROJECT }}
-      gitops-repo: ${{ env.GITOPS_REPO }}
+      image-name: ${{ env.IMAGE_NAME }}
+      project-name: ${{ env.PROJECT_NAME }}
+
+      # Go configuration
       go-version: '1.23'
       working-directory: '.'
-      dockerfile: build/Dockerfile
+      dockerfile: Dockerfile
+
+      # CI options
       enable-lint: true
       enable-test: true
       enable-coverage: true
 
-# Project structure expected:
-# ├── go.mod
-# ├── go.sum
-# ├── .golangci.yml (optional, uses defaults if missing)
-# ├── cmd/
-# │   └── server/
-# │       └── main.go
-# ├── internal/
-# │   ├── handler/
-# │   ├── service/
-# │   └── repository/
-# ├── pkg/
-# ├── build/
-# │   └── Dockerfile
-# └── .github/
-#     └── workflows/
-#         └── pipeline.yaml (this file)
+      # Security
+      enable-signing: true
+      enable-scanning: true
+      scan-severity: 'CRITICAL,HIGH'
 
-# CI Pipeline runs:
+      # Release automation (on merge to main)
+      enable-auto-release: true
+      enable-changelog: true
+      changelog-config: cliff.toml
+
+# What this does:
+# - PRs to develop: Lint, test, build (no push, no deploy)
+# - develop: Lint, test, build, push (dev-latest, dev-<sha>), deploy to DEV
+# - release/X.Y.Z branch: Build, push (X.Y.Z-rc), deploy to STG
+# - release/X.Y.Z PR to main: Build and push X.Y.Z-rc image
+# - main merge (from release/*): Automatically:
+#   - Detects version from merge commit (e.g., "1.2.3")
+#   - Retags X.Y.Z-rc → X.Y.Z, X.Y, X, latest
+#   - Signs images with cosign
+#   - Generates changelog (if enabled)
+#   - Creates git tag vX.Y.Z
+#   - Merges back to develop
+#   - Does NOT auto-deploy to PRD (requires manual workflow_dispatch)
+#
+# Manual deployment to PRD:
+#   Go to Actions → Run workflow → Select "prd" environment
+#
+# CI includes:
 # 1. golangci-lint (linting)
 # 2. go test ./... (unit tests)
 # 3. go test -race (race detection)
 # 4. go test -coverprofile (coverage report)
 # 5. gosec (security scanning)
-
-# Then builds Docker image and deploys via GitOps
+# 6. Docker image build, sign, scan
+# 7. GitOps deployment to dev/stg (automatic), prd (manual)
+#
+# Project structure expected:
+# ├── go.mod
+# ├── go.sum
+# ├── .golangci.yml (optional, uses defaults if missing)
+# ├── cliff.toml (optional, for changelog generation)
+# ├── Dockerfile
+# ├── cmd/ or main.go
+# ├── internal/
+# ├── pkg/
+# └── .github/
+#     └── workflows/
+#         └── pipeline.yaml (this file)

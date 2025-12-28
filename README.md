@@ -18,7 +18,7 @@ Centralized, tech-stack-specific CI/CD workflows for maximum code reuse and mini
 │  .github/workflows/pipeline.yaml (~25 lines)            │
 │                                                          │
 │  - Calls tech-stack pipeline (e.g., _pipeline-golang)   │
-│  - Passes app-name, project, gitops-repo                │
+│  - Passes app-name, image-name, project-name            │
 │  - No command strings needed!                           │
 └──────────────────┬──────────────────────────────────────┘
                    │
@@ -100,15 +100,14 @@ on:
 
 env:
   APP_NAME: my-go-app
-  PROJECT: platform
 
 jobs:
   pipeline:
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-golang.yaml@main
     with:
       app-name: ${{ env.APP_NAME }}
-      project: ${{ env.PROJECT }}
-      gitops-repo: mrops-br/gitops-${{ env.PROJECT }}
+      image-name: ${{ github.repository }}
+      project-name: platform
       go-version: '1.23'
       deploy-environment: ${{ inputs.environment }}
     secrets: inherit
@@ -130,15 +129,14 @@ on:
 
 env:
   APP_NAME: my-nodejs-app
-  PROJECT: devportal
 
 jobs:
   pipeline:
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-nodejs.yaml@main
     with:
       app-name: ${{ env.APP_NAME }}
-      project: ${{ env.PROJECT }}
-      gitops-repo: mrops-br/gitops-${{ env.PROJECT }}
+      image-name: ${{ github.repository }}
+      project-name: devportal
       node-version: '20'
       package-manager: 'npm'  # or 'yarn', 'pnpm'
     secrets: inherit
@@ -158,15 +156,14 @@ on:
 
 env:
   APP_NAME: my-python-app
-  PROJECT: data-platform
 
 jobs:
   pipeline:
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-python.yaml@main
     with:
       app-name: ${{ env.APP_NAME }}
-      project: ${{ env.PROJECT }}
-      gitops-repo: mrops-br/gitops-${{ env.PROJECT }}
+      image-name: ${{ github.repository }}
+      project-name: data-platform
       python-version: '3.12'
       package-manager: 'pip'  # or 'poetry', 'pipenv'
     secrets: inherit
@@ -178,9 +175,9 @@ jobs:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `app-name` | ✅ | - | Application name (used for image naming) |
-| `project` | ✅ | - | Project name (e.g., devportal) |
-| `gitops-repo` | ✅ | - | GitOps repository (e.g., org/gitops-devportal) |
+| `app-name` | ✅ | - | Application name (used for GitOps paths) |
+| `image-name` | ✅ | - | Full container image name (e.g., org/app-name) |
+| `project-name` | ✅ | - | Project name (e.g., devportal) |
 | `working-directory` | ❌ | `.` | Working directory for commands |
 | `dockerfile` | ❌ | `Dockerfile` | Path to Dockerfile |
 | `registry` | ❌ | `ghcr.io` | Container registry |
@@ -315,9 +312,10 @@ jobs:
     uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
     with:
       app-name: my-app
-      project: my-project
+      argocd-app-name: my-project-dev-my-app
+      image-name: ${{ github.repository_owner }}/my-app
       environment: dev
-      gitops-repo: org/gitops-my-project
+      gitops-repo: ${{ github.repository_owner }}/gitops-my-project
       image-tag: dev-latest
     secrets: inherit
 ```
@@ -332,7 +330,7 @@ jobs:
   ci:
     uses: ./_ci.yaml@main
     with:
-      runner: '[shared-runners]'
+      runner: 'shared-runners'
       lint-command: 'npm run lint'
       test-command: 'npm test'
       setup-command: 'npm ci'
@@ -361,8 +359,8 @@ jobs:
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-nodejs.yaml@main
     with:
       app-name: my-app
-      project: devportal
-      gitops-repo: org/gitops-devportal
+      image-name: org/my-app
+      project-name: devportal
     secrets: inherit
 ```
 

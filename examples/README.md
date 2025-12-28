@@ -1,97 +1,90 @@
 # Workflow Examples
 
-This directory contains example workflows demonstrating different use cases and patterns.
+**7 focused examples** covering all major use cases. Simple, no duplicates.
+
+> **Note**: All examples use a **single workflow file** with both `push` and `pull_request` triggers. No need for separate PR check workflows - the pipelines automatically handle different scenarios based on the Git Flow context.
+
+## Quick Reference
+
+| Example | Language | Use Case |
+|---------|----------|----------|
+| `golang-microservice.yaml` | Go | Backend services, APIs, microservices |
+| `nodejs-microservice.yaml` | Node.js | Web apps, APIs, full-stack |
+| `python-ml-service.yaml` | Python | ML services, data processing, APIs |
+| `container-repo.yaml` | Any | Build container images only (no app deployment) |
+| `simple-app.yaml` | Any | Quick-start template (choose your language) |
+| `custom-modular.yaml` | Any | Advanced custom pipelines |
+| `cleanup-images.yaml` | Utility | Clean up old container images |
 
 ## Examples
 
-### 1. Container-Only Repository (`container-repo.yaml`)
+### Language-Specific Pipelines
 
-**Use case:** Building and releasing Docker images without application deployment (like `gha-runner-images`).
-
-**Features:**
-- Automatic Git Flow tagging
-- Automated release on merge to main
-- Image signing and scanning
-- Changelog generation
-- Semver tagging (X, X.Y, X.Y.Z, latest)
-
-**Perfect for:**
-- Base images
-- Builder images
-- Tool images
-- Runner images
-
-### 2. Full-Stack Node.js Application (`fullstack-nodejs.yaml`)
-
-**Use case:** Complete CI/CD for Node.js applications with GitOps deployment.
+#### 1. Go Microservice (`golang-microservice.yaml`)
 
 **Features:**
-- Lint, test, coverage
-- Docker build and push
-- ArgoCD deployment
-- Automatic environment detection
-- Manual production deployment
+- golangci-lint, go test, race detection, coverage
+- gosec security scanning
+- Docker build, sign, scan
+- GitOps deployment
+- Automatic releases
 
-**Perfect for:**
-- REST APIs
-- GraphQL servers
-- Web applications
-- Microservices
+**Perfect for:** Backend services, gRPC, CLI tools
 
-### 3. Go Microservice (`golang-microservice.yaml`)
-
-**Use case:** Go backend service with comprehensive testing.
+#### 2. Node.js Microservice (`nodejs-microservice.yaml`)
 
 **Features:**
-- golangci-lint
-- Unit tests with race detection
-- Coverage reporting
-- Security scanning with gosec
+- ESLint, Jest, coverage
+- Docker build, sign, scan
+- GitOps deployment
+- Multiple package managers (npm, yarn, pnpm)
+
+**Perfect for:** Web apps, REST APIs, GraphQL servers
+
+#### 3. Python ML Service (`python-ml-service.yaml`)
+
+**Features:**
+- ruff, black, mypy, pytest
+- bandit security scanning
+- Docker build, sign, scan
 - GitOps deployment
 
-**Perfect for:**
-- Backend services
-- gRPC services
-- CLI tools
-- System services
+**Perfect for:** ML inference, data processing, API backends
 
-### 4. Python ML Service (`python-ml-service.yaml`)
+### Special Use Cases
 
-**Use case:** Python application with type checking and ML model testing.
+#### 4. Container-Only (`container-repo.yaml`)
 
 **Features:**
-- Linting with ruff
-- Type checking with mypy
-- Code formatting with black
-- Security scanning with bandit
-- pytest with coverage
+- Build and release container images only
+- Automatic semver tagging
+- Image signing and scanning
+- Changelog generation
 
-**Perfect for:**
-- ML inference services
-- Data processing services
-- API backends
-- Batch jobs
+**Perfect for:** Base images, builder images, runner images
 
-### 5. Custom Modular Pipeline (`custom-modular.yaml`)
-
-**Use case:** Fine-grained control using individual building blocks.
+#### 5. Simple Template (`simple-app.yaml`)
 
 **Features:**
-- Uses composite actions directly
-- Custom CI steps
-- Custom deployment (non-ArgoCD)
-- Multi-platform builds
-- Manual release orchestration
+- All language pipelines in one file (disabled by default)
+- Enable the one you need
+- Quick starting point
 
-**Perfect for:**
-- Custom deployment platforms (Cloud Run, Lambda, ECS)
-- Non-Kubernetes deployments
-- Hybrid CI/CD workflows
-- Special requirements
+**Perfect for:** New projects, choosing a language
 
-### 6. Container Image Cleanup (`cleanup-images.yaml`)
+#### 6. Custom Modular (`custom-modular.yaml`)
 
-**Use case:** Automated cleanup of old container images from the registry.
+**Features:**
+- Use individual composite actions
+- Full control over each step
+- Custom deployment logic
+- Advanced use cases
+
+**Perfect for:** Cloud Run, Lambda, ECS, non-Kubernetes deployments
+
+### Utility Workflows
+
+#### 7. Cleanup Images (`cleanup-images.yaml`)
 
 **Features:**
 - Protection-based cleanup (specify what to keep, delete the rest)
@@ -128,10 +121,29 @@ This directory contains example workflows demonstrating different use cases and 
 ## Quick Start
 
 1. **Choose an example** that matches your use case
-2. **Copy** the workflow to `.github/workflows/pipeline.yaml` in your repository
-3. **Customize** environment variables (`APP_NAME`, `PROJECT`, etc.)
-4. **Configure secrets** (see below)
-5. **Push** to trigger the pipeline
+2. **Copy** the workflow to `.github/workflows/pipeline.yaml` in your repository (single file handles all events)
+3. **Customize** environment variables:
+   - `APP_NAME`: Application name for GitOps paths (e.g., `my-app`)
+   - `IMAGE_NAME`: Full container image path (e.g., `myorg/my-app`)
+   - `PROJECT_NAME`: Project name (e.g., `platform`, `devportal`)
+4. **Configure secrets** (see Required Configuration below)
+5. **Push or create a PR** to trigger the pipeline
+
+**Note:** `APP_NAME` and `IMAGE_NAME` can differ if needed (e.g., multi-org setups or custom registries).
+
+## How It Works
+
+The single workflow file automatically handles different scenarios:
+
+| Trigger | Behavior |
+|---------|----------|
+| **PR to develop** | Build only (validation, no push, no deploy) |
+| **Push to develop** | Build, push (`dev-latest`, `dev-<sha>`), deploy to DEV |
+| **PR to main** (from release/hotfix) | Build, push (`X.Y.Z-rc`), deploy to STAGING |
+| **Merge to main** | Retag rc→final version, create release, deploy to PRODUCTION |
+| **Manual trigger** | Deploy to chosen environment (dev/stg/prd) |
+
+No separate workflows needed - the pipeline detects the Git Flow context automatically!
 
 ## Required Configuration
 
@@ -142,6 +154,19 @@ This directory contains example workflows demonstrating different use cases and 
 | `GITHUB_TOKEN` | All workflows | Automatic, no setup needed |
 | `ARGOCD_AUTH_TOKEN` | ArgoCD deployments | `argocd account generate-token` |
 | `ARGOCD_SERVER` | ArgoCD deployments | Your ArgoCD server URL (e.g., `argocd.example.com`) |
+| `CICD_USERNAME` | Runner authentication | GitHub username or organization name |
+| `CICD_TOKEN` | Runner authentication | GitHub PAT with `read:packages` scope |
+
+**Note:** The `CICD_USERNAME` and `CICD_TOKEN` are used to authenticate when pulling the `runner-base` container image from GHCR on self-hosted runners.
+
+**Setup Example:**
+```bash
+# Using GitHub CLI
+gh secret set ARGOCD_AUTH_TOKEN --org YOUR_ORG --body "your-argocd-token"
+gh secret set ARGOCD_SERVER --org YOUR_ORG --body "argocd.example.com"
+gh secret set CICD_USERNAME --org YOUR_ORG --body "your-github-username"
+gh secret set CICD_TOKEN --org YOUR_ORG --body "ghp_your_personal_access_token"
+```
 
 ### Variables (Optional)
 
@@ -243,13 +268,18 @@ jobs:
 
 **After:**
 ```yaml
+env:
+  APP_NAME: my-app
+  IMAGE_NAME: org/my-app
+  PROJECT_NAME: devportal
+
 jobs:
   pipeline:
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-nodejs.yaml@main
     with:
-      app-name: my-app
-      project: devportal
-      gitops-repo: org/gitops-devportal
+      app-name: ${{ env.APP_NAME }}
+      image-name: ${{ env.IMAGE_NAME }}
+      project-name: ${{ env.PROJECT_NAME }}
     secrets: inherit
 ```
 

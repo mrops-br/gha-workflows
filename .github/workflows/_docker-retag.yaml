@@ -40,7 +40,7 @@ on:
         description: 'Runner to use'
         required: false
         type: string
-        default: '[shared-runners]'
+        default: 'shared-runners'
 
     outputs:
       digest:
@@ -53,7 +53,7 @@ on:
 jobs:
   retag:
     name: Retag Image
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       packages: write
       id-token: write

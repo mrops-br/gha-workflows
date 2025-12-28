@@ -140,7 +140,6 @@ on:
 
 env:
   APP_NAME: my-nodejs-app
-  PROJECT: devportal
   GITOPS_REPO: mrops-br/gitops-devportal
 
 jobs:
@@ -148,7 +147,6 @@ jobs:
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-nodejs.yaml@main
     with:
       app-name: ${{ env.APP_NAME }}
-      project: ${{ env.PROJECT }}
       gitops-repo: ${{ env.GITOPS_REPO }}
       node-version: '20'
       package-manager: 'npm'
@@ -370,7 +368,6 @@ jobs:
     uses: mrops-br/gha-workflows/.github/workflows/_pipeline-nodejs.yaml@main
     with:
       app-name: my-app
-      project: devportal
       gitops-repo: org/gitops-devportal
     secrets: inherit
 ```

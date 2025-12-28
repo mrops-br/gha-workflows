@@ -7,12 +7,12 @@ on:
         description: 'Application name'
         required: true
         type: string
-      project:
-        description: 'Project name (e.g., devportal)'
+      image-name:
+        description: 'Full container image name (e.g., org/app-name)'
         required: true
         type: string
-      gitops-repo:
-        description: 'GitOps repository (e.g., org/gitops-devportal)'
+      project-name:
+        description: 'Project name (e.g., devportal)'
         required: true
         type: string
       go-version:
@@ -35,6 +35,11 @@ on:
         required: false
         type: string
         default: 'ghcr.io'
+      platforms:
+        description: 'Target platforms'
+        required: false
+        type: string
+        default: 'linux/amd64'
       enable-lint:
         description: 'Enable linting'
         required: false
@@ -50,21 +55,92 @@ on:
         required: false
         type: boolean
         default: true
+      enable-lint-dockerfile:
+        description: 'Enable Dockerfile linting'
+        required: false
+        type: boolean
+        default: true
+      dockerfile-failure-threshold:
+        description: 'Dockerfile lint failure threshold'
+        required: false
+        type: string
+        default: 'warning'
+      enable-signing:
+        description: 'Enable image signing with cosign'
+        required: false
+        type: boolean
+        default: true
+      enable-scanning:
+        description: 'Enable vulnerability scanning'
+        required: false
+        type: boolean
+        default: true
+      scan-severity:
+        description: 'Vulnerability scan severity'
+        required: false
+        type: string
+        default: 'CRITICAL,HIGH'
+      enable-auto-release:
+        description: 'Enable automatic release on merge to main'
+        required: false
+        type: boolean
+        default: true
+      enable-changelog:
+        description: 'Enable changelog generation'
+        required: false
+        type: boolean
+        default: false
+      changelog-config:
+        description: 'Path to git-cliff config'
+        required: false
+        type: string
+        default: 'cliff.toml'
       deploy-environment:
         description: 'Environment to deploy (auto-detected if not set)'
         required: false
         type: string
         default: ''
+      lint-runner:
+        description: 'Runner for lint and CI jobs'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      build-runner:
+        description: 'Runner for build and deploy jobs'
+        required: false
+        type: string
+        default: 'shared-runners'
     secrets:
-      argocd-auth-token:
+      ARGOCD_AUTH_TOKEN:
         description: 'ArgoCD authentication token'
-        required: true
-      argocd-server:
+        required: false
+      ARGOCD_SERVER:
         description: 'ArgoCD server URL'
-        required: true
+        required: false
+      CICD_USERNAME:
+        description: 'Container registry username for pulling runner image'
+        required: false
+      CICD_TOKEN:
+        description: 'Container registry token for pulling runner image'
+        required: false
 
 jobs:
-  # Step 1: CI - Lint, Test, Security Scan
+  # Step 1: Lint Dockerfile
+  lint:
+    name: Lint Dockerfile
+    if: inputs.enable-lint-dockerfile
+    runs-on: ${{ inputs.lint-runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Lint Dockerfile
+        uses: mrops-br/gha-workflows/.github/actions/quality/lint-dockerfile@main
+        with:
+          dockerfile: ${{ inputs.dockerfile }}
+          failure-threshold: ${{ inputs.dockerfile-failure-threshold }}
+
+  # Step 2: CI - Lint, Test, Security Scan
   ci:
     name: CI
     uses: mrops-br/gha-workflows/.github/workflows/_ci-golang.yaml@main
@@ -75,28 +151,52 @@ jobs:
       enable-test: ${{ inputs.enable-test }}
       enable-coverage: ${{ inputs.enable-coverage }}
       enable-security-scan: true
-      runner: 'ubuntu-latest'
+      runner: ${{ inputs.lint-runner }}
 
-  # Step 2: Build Docker Image
+  # Step 3: Detect Git Flow context
+  detect-context:
+    name: Detect Context
+    uses: mrops-br/gha-workflows/.github/workflows/_detect-gitflow.yaml@main
+    with:
+      runner: ubuntu-latest
+
+  # Step 4: Build, Sign, Scan Docker Image
   build:
     name: Build
-    needs: ci
+    needs: [lint, ci, detect-context]
+    if: |
+      always() &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      needs.ci.result == 'success' &&
+      needs.detect-context.outputs.is-main-merge == 'false'
     uses: mrops-br/gha-workflows/.github/workflows/_build-docker.yaml@main
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      security-events: write
     with:
-      app-name: ${{ inputs.app-name }}
+      image-name: ${{ inputs.image-name }}
       context: ${{ inputs.working-directory }}
       dockerfile: ${{ inputs.dockerfile }}
       registry: ${{ inputs.registry }}
-      platforms: 'linux/amd64'
-      push: ${{ github.event_name != 'pull_request' }}
-      runner: '[shared-runners]'
+      platforms: ${{ inputs.platforms }}
+      push: ${{ needs.detect-context.outputs.should-push == 'true' }}
+      enable-signing: ${{ inputs.enable-signing }}
+      enable-scanning: ${{ inputs.enable-scanning }}
+      scan-severity: ${{ inputs.scan-severity }}
+      runner: ${{ inputs.build-runner }}
     secrets: inherit
 
-  # Step 3: Determine environment
+  # Step 5: Determine environment for deployment
   determine-env:
     name: Determine Environment
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    needs: [build, detect-context]
+    if: |
+      always() &&
+      needs.build.result == 'success' &&
+      needs.detect-context.outputs.should-push == 'true'
     outputs:
       environment: ${{ steps.env.outputs.environment }}
       should-deploy: ${{ steps.env.outputs.should-deploy }}
@@ -105,31 +205,47 @@ jobs:
       - name: Determine deployment environment
         id: env
         run: |
-          # Use input if provided, otherwise auto-detect
+          # Use manual input if provided (workflow_dispatch)
           if [ -n "${{ inputs.deploy-environment }}" ]; then
             ENV="${{ inputs.deploy-environment }}"
             SHOULD_DEPLOY="true"
-            IMAGE_TAG="${{ needs.build.outputs.image-tags }}"
-          elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
-            ENV="dev"
-            SHOULD_DEPLOY="true"
-            IMAGE_TAG="dev-latest"
-          elif [[ "${{ github.ref }}" =~ ^refs/heads/release/ ]]; then
+            # For manual deploys, extract the first tag from build outputs
+            IMAGE_TAG=$(echo "${{ needs.build.outputs.image-tags }}" | head -1)
+
+          # PR to main from release/* or hotfix/* → Deploy to STAGING with RC tag
+          elif [[ "${{ github.event_name }}" == "pull_request" ]] && \
+               [[ "${{ github.base_ref }}" == "main" ]] && \
+               [[ "${{ needs.detect-context.outputs.branch-type }}" =~ ^(release|hotfix)$ ]]; then
             ENV="stg"
             SHOULD_DEPLOY="true"
-            # Extract version tag from build outputs
-            IMAGE_TAG=$(echo "${{ needs.build.outputs.image-tags }}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-rc' | head -1)
+            # Extract version-rc tag from build outputs (e.g., 1.2.3-rc)
+            IMAGE_TAG=$(echo "${{ needs.build.outputs.image-tags }}" | grep -E '[0-9]+\.[0-9]+\.[0-9]+-rc' | head -1)
             if [ -z "$IMAGE_TAG" ]; then
               IMAGE_TAG="${{ github.sha }}"
             fi
-          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            ENV="prd"
-            SHOULD_DEPLOY="false"  # Require manual approval for production
-            IMAGE_TAG="latest"
+            echo "📦 PR to main → Deploy to STAGING with tag: $IMAGE_TAG"
+
+          # Push to develop → Deploy to DEV
+          elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            ENV="dev"
+            SHOULD_DEPLOY="true"
+            IMAGE_TAG="dev-${{ github.sha }}"
+            echo "🚀 Push to develop → Deploy to DEV with tag: $IMAGE_TAG"
+
+          # Push to release/* or hotfix/* branches (not PR) → no auto-deploy
+          # (only PRs to main from these branches deploy to staging)
+          elif [[ "${{ github.ref }}" =~ ^refs/heads/(release|hotfix)/ ]]; then
+            ENV=""
+            SHOULD_DEPLOY="false"
+            IMAGE_TAG=""
+            echo "ℹ️ Release/hotfix branch push → Build only, no deployment"
+
+          # Unknown/other scenarios
           else
             ENV=""
             SHOULD_DEPLOY="false"
             IMAGE_TAG=""
+            echo "ℹ️ No deployment configured for this scenario"
           fi
 
           echo "environment=$ENV" >> $GITHUB_OUTPUT
@@ -140,21 +256,121 @@ jobs:
           echo "Should Deploy: $SHOULD_DEPLOY"
           echo "Image Tag: $IMAGE_TAG"
 
-  # Step 4: Deploy to Environment
+  # Step 6: Deploy to Environment (dev/stg only, prd is manual)
   deploy:
     name: Deploy to ${{ needs.determine-env.outputs.environment }}
-    needs: [build, determine-env]
-    if: needs.determine-env.outputs.should-deploy == 'true'
+    needs: [build, detect-context, determine-env]
+    if: |
+      needs.determine-env.outputs.should-deploy == 'true' &&
+      needs.determine-env.outputs.environment != ''
     uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
     with:
       app-name: ${{ inputs.app-name }}
-      project: ${{ inputs.project }}
+      argocd-app-name: ${{ inputs.project-name }}-${{ needs.determine-env.outputs.environment }}-${{ inputs.app-name }}
+      image-name: ${{ inputs.image-name }}
       environment: ${{ needs.determine-env.outputs.environment }}
-      gitops-repo: ${{ inputs.gitops-repo }}
+      gitops-repo: ${{ github.repository_owner }}/gitops-${{ inputs.project-name }}
       image-tag: ${{ needs.determine-env.outputs.image-tag }}
       registry: ${{ inputs.registry }}
       wait-for-sync: true
-      runner: '[shared-runners]'
+      runner: ${{ inputs.build-runner }}
     secrets:
-      argocd-auth-token: ${{ secrets.argocd-auth-token }}
-      argocd-server: ${{ secrets.argocd-server }}
+      ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+      ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+      CICD_USERNAME: ${{ secrets.CICD_USERNAME }}
+      CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+
+  # Step 7: Release (on main branch merge)
+  release:
+    name: Release
+    needs: [detect-context]
+    if: |
+      needs.detect-context.outputs.is-main-merge == 'true' &&
+      inputs.enable-auto-release
+    uses: mrops-br/gha-workflows/.github/workflows/_gitflow-release.yaml@main
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    secrets: inherit
+    with:
+      auto-detect-version: true
+      enable-docker-retag: true
+      docker-registry: ${{ inputs.registry }}
+      docker-image-name: ${{ inputs.image-name }}
+      docker-semver-tags: true
+      enable-changelog: ${{ inputs.enable-changelog }}
+      changelog-config: ${{ inputs.changelog-config }}
+      enable-git-tag: true
+      enable-merge-back: true
+      runner: 'ubuntu-latest'
+
+  # Step 8: Deploy to Production (after successful release)
+  deploy-production:
+    name: Deploy to Production
+    needs: [detect-context, release]
+    if: |
+      needs.detect-context.outputs.is-main-merge == 'true' &&
+      needs.release.result == 'success'
+    uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
+    with:
+      app-name: ${{ inputs.app-name }}
+      argocd-app-name: ${{ inputs.project-name }}-prd-${{ inputs.app-name }}
+      image-name: ${{ inputs.image-name }}
+      environment: prd
+      gitops-repo: ${{ github.repository_owner }}/gitops-${{ inputs.project-name }}
+      image-tag: ${{ needs.release.outputs.version }}
+      registry: ${{ inputs.registry }}
+      wait-for-sync: true
+      runner: ${{ inputs.build-runner }}
+    secrets:
+      ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+      ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+      CICD_USERNAME: ${{ secrets.CICD_USERNAME }}
+      CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+
+  # Summary
+  summary:
+    name: Pipeline Summary
+    needs: [lint, ci, detect-context, build, determine-env, deploy, release, deploy-production]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 🚀 Go Application Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Application**: \`${{ inputs.app-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch Type**: ${{ needs.detect-context.outputs.branch-type }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CI | ${{ needs.ci.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Release | ${{ needs.release.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy to Production | ${{ needs.deploy-production.result }} |" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.detect-context.outputs.is-main-merge }}" == "true" ]]; then
+            if [[ "${{ needs.release.result }}" == "success" ]]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "✅ **Release completed successfully!**" >> $GITHUB_STEP_SUMMARY
+              if [[ "${{ needs.deploy-production.result }}" == "success" ]]; then
+                echo "✅ **Deployed to PRODUCTION**" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "❌ **Release failed**" >> $GITHUB_STEP_SUMMARY
+            fi
+          elif [[ "${{ needs.build.result }}" == "success" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ needs.detect-context.outputs.should-push }}" == "true" ]]; then
+              echo "✅ **Build and push completed**" >> $GITHUB_STEP_SUMMARY
+              if [[ "${{ needs.deploy.result }}" == "success" ]]; then
+                echo "✅ **Deployed to ${{ needs.determine-env.outputs.environment }}**" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              echo "✅ **Build validated (not pushed)**" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi

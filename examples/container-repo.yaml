@@ -63,7 +63,7 @@ jobs:
 
       # Runners
       lint-runner: 'ubuntu-latest'  # Fast, no circular dependency
-      build-runner: '[shared-runners]'  # Self-hosted with buildkit
+      build-runner: 'shared-runners'  # Self-hosted with buildkit
 
 # What this does:
 # - develop: Builds and pushes dev-latest, dev-<sha>

@@ -47,7 +47,7 @@ on:
 jobs:
   lint:
     name: Lint
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     if: inputs.enable-lint
     defaults:
       run:
@@ -82,7 +82,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     if: inputs.enable-test
     defaults:
       run:

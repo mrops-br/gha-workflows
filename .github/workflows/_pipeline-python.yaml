@@ -7,12 +7,12 @@ on:
         description: 'Application name'
         required: true
         type: string
-      project:
-        description: 'Project name (e.g., devportal)'
+      image-name:
+        description: 'Full container image name (e.g., org/app-name)'
         required: true
         type: string
-      gitops-repo:
-        description: 'GitOps repository (e.g., org/gitops-devportal)'
+      project-name:
+        description: 'Project name (e.g., devportal)'
         required: true
         type: string
       python-version:
@@ -60,21 +60,62 @@ on:
         required: false
         type: boolean
         default: true
+      enable-lint-dockerfile:
+        description: 'Enable Dockerfile linting'
+        required: false
+        type: boolean
+        default: true
+      dockerfile-failure-threshold:
+        description: 'Dockerfile lint failure threshold'
+        required: false
+        type: string
+        default: 'warning'
       deploy-environment:
         description: 'Environment to deploy (auto-detected if not set)'
         required: false
         type: string
         default: ''
+      lint-runner:
+        description: 'Runner for lint and CI jobs'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      build-runner:
+        description: 'Runner for build and deploy jobs'
+        required: false
+        type: string
+        default: 'shared-runners'
     secrets:
-      argocd-auth-token:
+      ARGOCD_AUTH_TOKEN:
         description: 'ArgoCD authentication token'
         required: true
-      argocd-server:
+      ARGOCD_SERVER:
         description: 'ArgoCD server URL'
+        required: true
+      CICD_USERNAME:
+        description: 'Container registry username for pulling runner image'
+        required: true
+      CICD_TOKEN:
+        description: 'Container registry token for pulling runner image'
         required: true
 
 jobs:
-  # Step 1: CI - Lint, Test, Security Scan
+  # Step 1: Lint Dockerfile
+  lint:
+    name: Lint Dockerfile
+    if: inputs.enable-lint-dockerfile
+    runs-on: ${{ inputs.lint-runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Lint Dockerfile
+        uses: mrops-br/gha-workflows/.github/actions/quality/lint-dockerfile@main
+        with:
+          dockerfile: ${{ inputs.dockerfile }}
+          failure-threshold: ${{ inputs.dockerfile-failure-threshold }}
+
+  # Step 2: CI - Lint, Test, Security Scan
   ci:
     name: CI
     uses: mrops-br/gha-workflows/.github/workflows/_ci-python.yaml@main
@@ -87,24 +128,28 @@ jobs:
       enable-test: ${{ inputs.enable-test }}
       enable-coverage: ${{ inputs.enable-coverage }}
       enable-security-scan: true
-      runner: 'ubuntu-latest'
+      runner: ${{ inputs.lint-runner }}
 
-  # Step 2: Build Docker Image
+  # Step 3: Build Docker Image
   build:
     name: Build
-    needs: ci
+    needs: [lint, ci]
+    if: |
+      always() &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      needs.ci.result == 'success'
     uses: mrops-br/gha-workflows/.github/workflows/_build-docker.yaml@main
     with:
-      app-name: ${{ inputs.app-name }}
+      image-name: ${{ inputs.image-name }}
       context: ${{ inputs.working-directory }}
       dockerfile: ${{ inputs.dockerfile }}
       registry: ${{ inputs.registry }}
       platforms: 'linux/amd64'
       push: ${{ github.event_name != 'pull_request' }}
-      runner: '[shared-runners]'
+      runner: ${{ inputs.build-runner }}
     secrets: inherit
 
-  # Step 3: Determine environment
+  # Step 4: Determine environment
   determine-env:
     name: Determine Environment
     runs-on: ubuntu-latest
@@ -152,7 +197,7 @@ jobs:
           echo "Should Deploy: $SHOULD_DEPLOY"
           echo "Image Tag: $IMAGE_TAG"
 
-  # Step 4: Deploy to Environment
+  # Step 5: Deploy to Environment
   deploy:
     name: Deploy to ${{ needs.determine-env.outputs.environment }}
     needs: [build, determine-env]
@@ -160,13 +205,16 @@ jobs:
     uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
     with:
       app-name: ${{ inputs.app-name }}
-      project: ${{ inputs.project }}
+      argocd-app-name: ${{ inputs.project-name }}-${{ needs.determine-env.outputs.environment }}-${{ inputs.app-name }}
+      image-name: ${{ inputs.image-name }}
       environment: ${{ needs.determine-env.outputs.environment }}
-      gitops-repo: ${{ inputs.gitops-repo }}
+      gitops-repo: ${{ github.repository_owner }}/gitops-${{ inputs.project-name }}
       image-tag: ${{ needs.determine-env.outputs.image-tag }}
       registry: ${{ inputs.registry }}
       wait-for-sync: true
-      runner: '[shared-runners]'
+      runner: ${{ inputs.build-runner }}
     secrets:
-      argocd-auth-token: ${{ secrets.argocd-auth-token }}
-      argocd-server: ${{ secrets.argocd-server }}
+      ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+      ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+      CICD_USERNAME: ${{ secrets.CICD_USERNAME }}
+      CICD_TOKEN: ${{ secrets.CICD_TOKEN }}

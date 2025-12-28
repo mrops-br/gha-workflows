@@ -88,7 +88,7 @@ on:
 jobs:
   cleanup-old-versions:
     name: Cleanup Old Versions
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       packages: write
       contents: read
@@ -155,7 +155,7 @@ jobs:
   cleanup-untagged:
     name: Cleanup Untagged Images
     if: inputs.delete-untagged
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       packages: write
       contents: read
@@ -174,7 +174,7 @@ jobs:
     name: Cleanup Summary
     needs: [cleanup-old-versions, cleanup-untagged]
     if: always()
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: Generate summary
         run: |
