@@ -167,32 +167,16 @@ jobs:
   determine-env:
     name: Determine Environment
     needs: [detect-gitflow, build]
-    runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
-    outputs:
-      environment: ${{ steps.env.outputs.environment }}
-      should-deploy: ${{ steps.env.outputs.should-deploy }}
-      image-tag: ${{ steps.tags.outputs.image-tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Detect environment
-        id: env
-        uses: mrops-br/gha-workflows/.github/actions/gitflow/detect-env@main
-        with:
-          branch-type: ${{ needs.detect-gitflow.outputs.branch-type }}
-          override-env: ${{ inputs.deploy-environment }}
-
-      - name: Determine image tag
-        id: tags
-        uses: mrops-br/gha-workflows/.github/actions/gitflow/generate-tags@main
-        with:
-          branch-type: ${{ needs.detect-gitflow.outputs.branch-type }}
-          version: ${{ needs.detect-gitflow.outputs.version }}
-          sha: ${{ github.sha }}
-          event-name: ${{ github.event_name }}
-          pr-number: ${{ github.event.pull_request.number }}
+    uses: mrops-br/gha-workflows/.github/workflows/_determine-deployment-env.yaml@main
+    with:
+      deploy-environment: ${{ inputs.deploy-environment }}
+      branch-type: ${{ needs.detect-gitflow.outputs.branch-type }}
+      image-tags: ${{ needs.build.outputs.image-tags }}
+      event-name: ${{ github.event_name }}
+      github-ref: ${{ github.ref }}
+      github-base-ref: ${{ github.base_ref }}
+      github-sha: ${{ github.sha }}
 
   # Step 6: Deploy to Environment
   deploy:
@@ -205,6 +189,7 @@ jobs:
       argocd-app-name: ${{ inputs.project-name }}-${{ needs.determine-env.outputs.environment }}-${{ inputs.app-name }}
       image-name: ${{ inputs.image-name }}
       environment: ${{ needs.determine-env.outputs.environment }}
+      environment-name: ${{ needs.determine-env.outputs.environment-name }}
       gitops-repo: ${{ github.repository_owner }}/gitops-${{ inputs.project-name }}
       image-tag: ${{ needs.determine-env.outputs.image-tag }}
       registry: ${{ inputs.registry }}
@@ -240,7 +225,7 @@ jobs:
 
           if [[ "${{ needs.deploy.result }}" == "success" ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "✅ **Deployed to \`${{ needs.determine-env.outputs.environment }}\`**" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Deployed to \`${{ needs.determine-env.outputs.environment-name }}\`**" >> $GITHUB_STEP_SUMMARY
           elif [[ "${{ needs.deploy.result }}" == "skipped" ]] && [[ "${{ needs.build.result }}" == "success" ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "✅ **Build completed (deployment skipped)**" >> $GITHUB_STEP_SUMMARY

@@ -152,50 +152,17 @@ jobs:
   # Step 4: Determine environment
   determine-env:
     name: Determine Environment
-    runs-on: ubuntu-latest
+    needs: [build]
     if: github.event_name != 'pull_request'
-    outputs:
-      environment: ${{ steps.env.outputs.environment }}
-      should-deploy: ${{ steps.env.outputs.should-deploy }}
-      image-tag: ${{ steps.env.outputs.image-tag }}
-    steps:
-      - name: Determine deployment environment
-        id: env
-        run: |
-          # Use input if provided, otherwise auto-detect
-          if [ -n "${{ inputs.deploy-environment }}" ]; then
-            ENV="${{ inputs.deploy-environment }}"
-            SHOULD_DEPLOY="true"
-            IMAGE_TAG="${{ needs.build.outputs.image-tags }}"
-          elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
-            ENV="dev"
-            SHOULD_DEPLOY="true"
-            IMAGE_TAG="dev-latest"
-          elif [[ "${{ github.ref }}" =~ ^refs/heads/release/ ]]; then
-            ENV="stg"
-            SHOULD_DEPLOY="true"
-            # Extract version tag from build outputs
-            IMAGE_TAG=$(echo "${{ needs.build.outputs.image-tags }}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-rc' | head -1)
-            if [ -z "$IMAGE_TAG" ]; then
-              IMAGE_TAG="${{ github.sha }}"
-            fi
-          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            ENV="prd"
-            SHOULD_DEPLOY="false"  # Require manual approval for production
-            IMAGE_TAG="latest"
-          else
-            ENV=""
-            SHOULD_DEPLOY="false"
-            IMAGE_TAG=""
-          fi
-
-          echo "environment=$ENV" >> $GITHUB_OUTPUT
-          echo "should-deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
-          echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-          echo "Environment: $ENV"
-          echo "Should Deploy: $SHOULD_DEPLOY"
-          echo "Image Tag: $IMAGE_TAG"
+    uses: mrops-br/gha-workflows/.github/workflows/_determine-deployment-env.yaml@main
+    with:
+      deploy-environment: ${{ inputs.deploy-environment }}
+      branch-type: ${{ github.ref == 'refs/heads/develop' && 'develop' || github.ref == 'refs/heads/main' && 'main' || startsWith(github.ref, 'refs/heads/release/') && 'release' || startsWith(github.ref, 'refs/heads/hotfix/') && 'hotfix' || 'other' }}
+      image-tags: ${{ needs.build.outputs.image-tags }}
+      event-name: ${{ github.event_name }}
+      github-ref: ${{ github.ref }}
+      github-base-ref: ${{ github.base_ref }}
+      github-sha: ${{ github.sha }}
 
   # Step 5: Deploy to Environment
   deploy:
@@ -208,6 +175,7 @@ jobs:
       argocd-app-name: ${{ inputs.project-name }}-${{ needs.determine-env.outputs.environment }}-${{ inputs.app-name }}
       image-name: ${{ inputs.image-name }}
       environment: ${{ needs.determine-env.outputs.environment }}
+      environment-name: ${{ needs.determine-env.outputs.environment-name }}
       gitops-repo: ${{ github.repository_owner }}/gitops-${{ inputs.project-name }}
       image-tag: ${{ needs.determine-env.outputs.image-tag }}
       registry: ${{ inputs.registry }}

@@ -1,0 +1,139 @@
+name: Determine Deployment Environment
+
+on:
+  workflow_call:
+    inputs:
+      deploy-environment:
+        description: 'Override environment (for manual deployments)'
+        required: false
+        type: string
+        default: ''
+      branch-type:
+        description: 'Branch type (main, develop, release, hotfix, feature, other)'
+        required: true
+        type: string
+      is-main-merge:
+        description: 'Whether this is a merge to main'
+        required: false
+        type: string
+        default: 'false'
+      should-push:
+        description: 'Whether artifacts should be pushed'
+        required: false
+        type: string
+        default: 'true'
+      image-tags:
+        description: 'Image tags from build (for tag selection)'
+        required: false
+        type: string
+        default: ''
+      event-name:
+        description: 'GitHub event name'
+        required: false
+        type: string
+        default: ''
+      github-ref:
+        description: 'GitHub ref'
+        required: false
+        type: string
+        default: ''
+      github-base-ref:
+        description: 'GitHub base ref (for PRs)'
+        required: false
+        type: string
+        default: ''
+      github-sha:
+        description: 'GitHub commit SHA'
+        required: false
+        type: string
+        default: ''
+    outputs:
+      environment:
+        description: 'Target environment (dev, stg, prd, or empty)'
+        value: ${{ jobs.determine.outputs.environment }}
+      environment-name:
+        description: 'GitHub environment name (development, staging, production, or empty)'
+        value: ${{ jobs.determine.outputs.environment-name }}
+      should-deploy:
+        description: 'Whether deployment should proceed'
+        value: ${{ jobs.determine.outputs.should-deploy }}
+      image-tag:
+        description: 'Image tag to deploy'
+        value: ${{ jobs.determine.outputs.image-tag }}
+
+jobs:
+  determine:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      environment-name: ${{ steps.env.outputs.environment-name }}
+      should-deploy: ${{ steps.env.outputs.should-deploy }}
+      image-tag: ${{ steps.env.outputs.image-tag }}
+    steps:
+      - name: Determine deployment environment
+        id: env
+        run: |
+          # Use manual input if provided (workflow_dispatch)
+          if [ -n "${{ inputs.deploy-environment }}" ]; then
+            ENV="${{ inputs.deploy-environment }}"
+            SHOULD_DEPLOY="true"
+            # For manual deploys, extract the first tag from build outputs
+            IMAGE_TAG=$(echo "${{ inputs.image-tags }}" | head -1)
+
+          # PR to main from release/* or hotfix/* → Deploy to STAGING with RC tag
+          elif [[ "${{ inputs.event-name }}" == "pull_request" ]] && \
+               [[ "${{ inputs.github-base-ref }}" == "main" ]] && \
+               [[ "${{ inputs.branch-type }}" =~ ^(release|hotfix)$ ]]; then
+            ENV="stg"
+            SHOULD_DEPLOY="true"
+            # Extract version-rc tag from build outputs (e.g., 1.2.3-rc)
+            IMAGE_TAG=$(echo "${{ inputs.image-tags }}" | grep -E '[0-9]+\.[0-9]+\.[0-9]+-rc' | head -1)
+            if [ -z "$IMAGE_TAG" ]; then
+              IMAGE_TAG="${{ inputs.github-sha }}"
+            fi
+            echo "📦 PR to main → Deploy to STAGING with tag: $IMAGE_TAG"
+
+          # Push to develop → Deploy to DEV
+          elif [ "${{ inputs.github-ref }}" = "refs/heads/develop" ]; then
+            ENV="dev"
+            SHOULD_DEPLOY="true"
+            IMAGE_TAG="dev-${{ inputs.github-sha }}"
+            echo "🚀 Push to develop → Deploy to DEV with tag: $IMAGE_TAG"
+
+          # Push to release/* or hotfix/* branches (not PR) → no auto-deploy
+          # (only PRs to main from these branches deploy to staging)
+          elif [[ "${{ inputs.github-ref }}" =~ ^refs/heads/(release|hotfix)/ ]]; then
+            ENV=""
+            SHOULD_DEPLOY="false"
+            IMAGE_TAG=""
+            echo "ℹ️ Release/hotfix branch push → Build only, no deployment"
+
+          # Unknown/other scenarios
+          else
+            ENV=""
+            SHOULD_DEPLOY="false"
+            IMAGE_TAG=""
+            echo "ℹ️ No deployment configured for this scenario"
+          fi
+
+          # Map short environment names to full names
+          if [ "$ENV" = "dev" ]; then
+            ENV_NAME="development"
+          elif [ "$ENV" = "stg" ]; then
+            ENV_NAME="staging"
+          elif [ "$ENV" = "prd" ]; then
+            ENV_NAME="production"
+          else
+            ENV_NAME=""
+          fi
+
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "environment-name=$ENV_NAME" >> $GITHUB_OUTPUT
+          echo "should-deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
+          echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+          echo "Environment: $ENV"
+          echo "Environment Name: $ENV_NAME"
+          echo "Should Deploy: $SHOULD_DEPLOY"
+          echo "Image Tag: $IMAGE_TAG"

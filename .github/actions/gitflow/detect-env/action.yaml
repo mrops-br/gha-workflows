@@ -14,6 +14,9 @@ outputs:
   environment:
     description: 'Target environment (dev, stg, prd, or empty)'
     value: ${{ steps.detect.outputs.environment }}
+  environment-name:
+    description: 'GitHub environment name (development, staging, production, or empty)'
+    value: ${{ steps.detect.outputs.environment-name }}
   should-deploy:
     description: 'Whether automatic deployment should happen'
     value: ${{ steps.detect.outputs.should-deploy }}
@@ -76,7 +79,24 @@ runs:
           esac
         fi
 
+        # Map short environment names to full names
+        case "$ENVIRONMENT" in
+          dev)
+            ENV_NAME="development"
+            ;;
+          stg)
+            ENV_NAME="staging"
+            ;;
+          prd)
+            ENV_NAME="production"
+            ;;
+          *)
+            ENV_NAME=""
+            ;;
+        esac
+
         echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+        echo "environment-name=$ENV_NAME" >> $GITHUB_OUTPUT
         echo "should-deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
         echo "requires-approval=$REQUIRES_APPROVAL" >> $GITHUB_OUTPUT
 
@@ -84,5 +104,6 @@ runs:
         echo "### Environment Detection" >> $GITHUB_STEP_SUMMARY
         echo "- **Branch Type**: $BRANCH_TYPE" >> $GITHUB_STEP_SUMMARY
         [ -n "$ENVIRONMENT" ] && echo "- **Environment**: $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+        [ -n "$ENV_NAME" ] && echo "- **Environment Name**: $ENV_NAME" >> $GITHUB_STEP_SUMMARY
         echo "- **Auto-Deploy**: $SHOULD_DEPLOY" >> $GITHUB_STEP_SUMMARY
         echo "- **Requires Approval**: $REQUIRES_APPROVAL" >> $GITHUB_STEP_SUMMARY

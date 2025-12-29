@@ -15,6 +15,11 @@ on:
         description: 'Target environment (dev, stg, prd)'
         required: true
         type: string
+      environment-name:
+        description: 'GitHub environment name (development, staging, production)'
+        required: false
+        type: string
+        default: ''
       gitops-repo:
         description: 'GitOps repository (e.g., org/gitops-devportal)'
         required: true
@@ -81,7 +86,7 @@ jobs:
   sync-argocd:
     name: Sync ArgoCD
     runs-on: ${{ inputs.runner }}
-    environment: ${{ inputs.environment == 'dev' && 'development' || inputs.environment == 'stg' && 'staging' || 'production' }}
+    environment: ${{ inputs.environment-name != '' && inputs.environment-name || (inputs.environment == 'dev' && 'development' || inputs.environment == 'stg' && 'staging' || 'production') }}
     container:
       image: ghcr.io/mrops-br/runner-base:latest
       credentials:

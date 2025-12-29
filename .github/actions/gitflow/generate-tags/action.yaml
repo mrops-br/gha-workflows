@@ -27,6 +27,9 @@ outputs:
   primary-tag:
     description: 'Primary tag for this build'
     value: ${{ steps.generate.outputs.primary-tag }}
+  image-tag:
+    description: 'Image tag for deployment (alias for primary-tag)'
+    value: ${{ steps.generate.outputs.primary-tag }}
 
 runs:
   using: composite
