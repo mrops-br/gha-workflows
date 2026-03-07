@@ -81,7 +81,7 @@ on:
         type: string
         default: 'CRITICAL,HIGH'
       enable-security-scan:
-        description: 'Enable Trivy security scan"
+        description: 'Enable Trivy security scan'
         required: false
         type: boolean
         default: true
