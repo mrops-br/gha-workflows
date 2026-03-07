@@ -157,7 +157,12 @@ jobs:
     uses: mrops-br/gha-workflows/.github/workflows/_determine-deployment-env.yaml@main
     with:
       deploy-environment: ${{ inputs.deploy-environment }}
-      branch-type: ${{ github.ref == 'refs/heads/develop' && 'develop' || github.ref == 'refs/heads/main' && 'main' || startsWith(github.ref, 'refs/heads/release/') && 'release' || startsWith(github.ref, 'refs/heads/hotfix/') && 'hotfix' || 'other' }}
+      branch-type: >-
+        ${{ github.ref == 'refs/heads/develop' && 'develop'
+        || github.ref == 'refs/heads/main' && 'main'
+        || startsWith(github.ref, 'refs/heads/release/') && 'release'
+        || startsWith(github.ref, 'refs/heads/hotfix/') && 'hotfix'
+        || 'other' }}
       image-tags: ${{ needs.build.outputs.image-tags }}
       event-name: ${{ github.event_name }}
       github-ref: ${{ github.ref }}
