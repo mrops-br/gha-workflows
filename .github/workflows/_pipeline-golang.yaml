@@ -144,6 +144,9 @@ jobs:
   ci:
     name: CI
     uses: mrops-br/gha-workflows/.github/workflows/_ci-golang.yaml@main
+    permissions:
+      contents: read
+      security-events: write
     with:
       go-version: ${{ inputs.go-version }}
       working-directory: ${{ inputs.working-directory }}
