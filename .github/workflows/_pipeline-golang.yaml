@@ -80,6 +80,11 @@ on:
         required: false
         type: string
         default: 'CRITICAL,HIGH'
+      enable-security-scan:
+        description: 'Enable Trivy security scan"
+        required: false
+        type: boolean
+        default: true
       enable-auto-release:
         description: 'Enable automatic release on merge to main'
         required: false
@@ -154,7 +159,7 @@ jobs:
       enable-lint: ${{ inputs.enable-lint }}
       enable-test: ${{ inputs.enable-test }}
       enable-coverage: ${{ inputs.enable-coverage }}
-      enable-security-scan: true
+      enable-security-scan: ${{ inputs.enable-security-scan }}
       runner: ${{ inputs.lint-runner }}
 
   # Step 3: Detect Git Flow context
