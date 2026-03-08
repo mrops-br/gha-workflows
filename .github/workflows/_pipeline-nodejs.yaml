@@ -182,8 +182,8 @@ jobs:
       runner: ${{ inputs.lint-runner }}
 
   # Step 3: Detect Git Flow context
-  detect-gitflow:
-    name: Detect Git Flow
+  detect-context:
+    name: Detect Context
     uses: mrops-br/gha-workflows/.github/workflows/_detect-gitflow.yaml@main
     with:
       runner: ubuntu-latest
