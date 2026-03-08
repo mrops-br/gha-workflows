@@ -191,7 +191,7 @@ jobs:
   # Step 4: Build, Sign, Scan  Docker Image
   build:
     name: Build
-    needs: [lint, detect-gitflow, ci]
+    needs: [lint, ci, detect-context]
     if: |
       always() &&
       (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
@@ -228,7 +228,7 @@ jobs:
     uses: mrops-br/gha-workflows/.github/workflows/_determine-deployment-env.yaml@main
     with:
       deploy-environment: ${{ inputs.deploy-environment }}
-      branch-type: ${{ needs.detect-gitflow.outputs.branch-type }}
+      branch-type: ${{ needs.detect-context.outputs.branch-type }}
       is-main-merge: ${{ needs.detect-context.outputs.is-main-merge }}
       should-push: ${{ needs.detect-context.outputs.should-push }}
       image-tags: ${{ needs.build.outputs.image-tags }}
