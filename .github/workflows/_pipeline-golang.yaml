@@ -180,6 +180,7 @@ jobs:
       needs.detect-context.outputs.is-main-merge == 'false'
     uses: mrops-br/gha-workflows/.github/workflows/_build-docker.yaml@main
     permissions:
+      actions: read
       contents: read
       packages: write
       id-token: write

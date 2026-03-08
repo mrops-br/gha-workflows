@@ -114,6 +114,7 @@ jobs:
     name: Build and Push
     runs-on: ${{ inputs.runner }}
     permissions:
+      actions: read
       contents: read
       packages: write
       id-token: write
