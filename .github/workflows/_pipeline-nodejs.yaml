@@ -46,6 +46,11 @@ on:
         required: false
         type: string
         default: 'ghcr.io'
+      platforms:
+        description: 'Target platforms'
+        required: false
+        type: string
+        default: 'linux/amd64'
 
       # CI options
       enable-lint:
@@ -63,11 +68,6 @@ on:
         required: false
         type: boolean
         default: true
-      enable-security-scan:
-        description: 'Enable Trivy security scan'
-        required: false
-        type: boolean
-        default: true
       enable-lint-dockerfile:
         description: 'Enable Dockerfile linting'
         required: false
@@ -78,6 +78,41 @@ on:
         required: false
         type: string
         default: 'warning'
+      enable-signing:
+        description: 'Enable image signing with cosign'
+        required: false
+        type: boolean
+        default: true
+      enable-scanning:
+        description: 'Enable vulnerability scanning'
+        required: false
+        type: boolean
+        default: true
+      scan-severity:
+        description: 'Vulnerability scan severity'
+        required: false
+        type: string
+        default: 'CRITICAL,HIGH'
+      enable-security-scan:
+        description: 'Enable Trivy security scan'
+        required: false
+        type: boolean
+        default: true
+      enable-auto-release:
+        description: 'Enable automatic release on merge to main'
+        required: false
+        type: boolean
+        default: true
+      enable-changelog:
+        description: 'Enable changelog generation'
+        required: false
+        type: boolean
+        default: false
+      changelog-config:
+        description: 'Path to git-cliff config'
+        required: false
+        type: string
+        default: 'cliff.toml'
 
       # Deployment override
       deploy-environment:
@@ -128,14 +163,7 @@ jobs:
           dockerfile: ${{ inputs.dockerfile }}
           failure-threshold: ${{ inputs.dockerfile-failure-threshold }}
 
-  # Step 2: Detect Git Flow context
-  detect-gitflow:
-    name: Detect Git Flow
-    uses: mrops-br/gha-workflows/.github/workflows/_detect-gitflow.yaml@main
-    with:
-      runner: ubuntu-latest
-
-  # Step 3: CI - Lint, Test, Security Scan
+  # Step 2: CI - Lint, Test, Security Scan
   ci:
     name: CI
     uses: mrops-br/gha-workflows/.github/workflows/_ci-nodejs.yaml@main
@@ -153,49 +181,69 @@ jobs:
       enable-security-scan: ${{ inputs.enable-security-scan }}
       runner: ${{ inputs.lint-runner }}
 
-  # Step 4: Build Docker Image
+  # Step 3: Detect Git Flow context
+  detect-gitflow:
+    name: Detect Git Flow
+    uses: mrops-br/gha-workflows/.github/workflows/_detect-gitflow.yaml@main
+    with:
+      runner: ubuntu-latest
+
+  # Step 4: Build, Sign, Scan  Docker Image
   build:
     name: Build
     needs: [lint, detect-gitflow, ci]
     if: |
       always() &&
       (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
-      needs.ci.result == 'success'
+      needs.ci.result == 'success' &&
+      needs.detect-context.outputs.is-main-merge == 'false'
     uses: mrops-br/gha-workflows/.github/workflows/_build-docker.yaml@main
     permissions:
       actions: read
       contents: read
+      packages: write
+      id-token: write
       security-events: write
     with:
       image-name: ${{ inputs.image-name }}
       context: ${{ inputs.working-directory }}
       dockerfile: ${{ inputs.dockerfile }}
       registry: ${{ inputs.registry }}
-      platforms: 'linux/amd64'
-      push: ${{ github.event_name != 'pull_request' }}
+      platforms: ${{ inputs.platforms }}
+      push: ${{ needs.detect-context.outputs.should-push == 'true' }}
+      enable-signing: ${{ inputs.enable-signing }}
+      enable-scanning: ${{ inputs.enable-scanning }}
+      scan-severity: ${{ inputs.scan-severity }}
       runner: ${{ inputs.build-runner }}
     secrets: inherit
 
   # Step 5: Determine deployment environment
   determine-env:
     name: Determine Environment
-    needs: [detect-gitflow, build]
-    if: github.event_name != 'pull_request'
+    needs: [build, detect-context]
+    if: |
+      always() &&
+      needs.build.result == 'success' &&
+      needs.detect-context.outputs.should-push == 'true'
     uses: mrops-br/gha-workflows/.github/workflows/_determine-deployment-env.yaml@main
     with:
       deploy-environment: ${{ inputs.deploy-environment }}
       branch-type: ${{ needs.detect-gitflow.outputs.branch-type }}
+      is-main-merge: ${{ needs.detect-context.outputs.is-main-merge }}
+      should-push: ${{ needs.detect-context.outputs.should-push }}
       image-tags: ${{ needs.build.outputs.image-tags }}
       event-name: ${{ github.event_name }}
       github-ref: ${{ github.ref }}
       github-base-ref: ${{ github.base_ref }}
       github-sha: ${{ github.sha }}
 
-  # Step 6: Deploy to Environment
+  # Step 6: Deploy to Environment (dev/stg only, prd is manual)
   deploy:
     name: Deploy to ${{ needs.determine-env.outputs.environment }}
-    needs: [build, determine-env]
-    if: needs.determine-env.outputs.should-deploy == 'true'
+    needs: [build, detect-context, determine-env]
+    if: |
+      needs.determine-env.outputs.should-deploy == 'true' &&
+      needs.determine-env.outputs.environment != ''
     uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
     with:
       app-name: ${{ inputs.app-name }}
@@ -214,20 +262,69 @@ jobs:
       CICD_USERNAME: ${{ secrets.CICD_USERNAME }}
       CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
 
+  # Step 7: Release (on main branch merge)
+  release:
+    name: Release
+    needs: [detect-context]
+    if: |
+      needs.detect-context.outputs.is-main-merge == 'true' &&
+      inputs.enable-auto-release
+    uses: mrops-br/gha-workflows/.github/workflows/_gitflow-release.yaml@main
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    secrets: inherit
+    with:
+      auto-detect-version: true
+      enable-docker-retag: true
+      docker-registry: ${{ inputs.registry }}
+      docker-image-name: ${{ inputs.image-name }}
+      docker-semver-tags: true
+      enable-changelog: ${{ inputs.enable-changelog }}
+      changelog-config: ${{ inputs.changelog-config }}
+      enable-git-tag: true
+      enable-merge-back: true
+      runner: 'ubuntu-latest'
+
+  # Step 8: Deploy to Production (after successful release)
+  deploy-production:
+    name: Deploy to Production
+    needs: [detect-context, release]
+    if: |
+      needs.detect-context.outputs.is-main-merge == 'true' &&
+      needs.release.result == 'success'
+    uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
+    with:
+      app-name: ${{ inputs.app-name }}
+      argocd-app-name: ${{ inputs.project-name }}-prd-${{ inputs.app-name }}
+      image-name: ${{ inputs.image-name }}
+      environment: prd
+      environment-name: production
+      gitops-repo: ${{ github.repository_owner }}/gitops-${{ inputs.project-name }}
+      image-tag: ${{ needs.release.outputs.version }}
+      registry: ${{ inputs.registry }}
+      wait-for-sync: true
+      runner: ${{ inputs.build-runner }}
+    secrets:
+      ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+      ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+      CICD_USERNAME: ${{ secrets.CICD_USERNAME }}
+      CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+
   # Summary
   summary:
     name: Pipeline Summary
-    needs: [lint, detect-gitflow, ci, build, determine-env, deploy]
+    needs: [lint, ci, detect-context, build, determine-env, deploy, release, deploy-production]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Generate summary
         run: |
-          echo "## 🚀 Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 Go Application Pipeline Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**App**: \`${{ inputs.app-name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Branch Type**: ${{ needs.detect-gitflow.outputs.branch-type }}" >> $GITHUB_STEP_SUMMARY
-          [ -n "${{ needs.detect-gitflow.outputs.version }}" ] && echo "**Version**: ${{ needs.detect-gitflow.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Application**: \`${{ inputs.app-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch Type**: ${{ needs.detect-context.outputs.branch-type }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
@@ -235,11 +332,28 @@ jobs:
           echo "| CI | ${{ needs.ci.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Deploy | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Release | ${{ needs.release.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy to Production | ${{ needs.deploy-production.result }} |" >> $GITHUB_STEP_SUMMARY
 
-          if [[ "${{ needs.deploy.result }}" == "success" ]]; then
+          if [[ "${{ needs.detect-context.outputs.is-main-merge }}" == "true" ]]; then
+            if [[ "${{ needs.release.result }}" == "success" ]]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "✅ **Release completed successfully!**" >> $GITHUB_STEP_SUMMARY
+              if [[ "${{ needs.deploy-production.result }}" == "success" ]]; then
+                echo "✅ **Deployed to PRODUCTION**" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "❌ **Release failed**" >> $GITHUB_STEP_SUMMARY
+            fi
+          elif [[ "${{ needs.build.result }}" == "success" ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "✅ **Deployed to \`${{ needs.determine-env.outputs.environment-name }}\`**" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${{ needs.deploy.result }}" == "skipped" ]] && [[ "${{ needs.build.result }}" == "success" ]]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "✅ **Build completed (deployment skipped)**" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ needs.detect-context.outputs.should-push }}" == "true" ]]; then
+              echo "✅ **Build and push completed**" >> $GITHUB_STEP_SUMMARY
+              if [[ "${{ needs.deploy.result }}" == "success" ]]; then
+                echo "✅ **Deployed to ${{ needs.determine-env.outputs.environment-name }}**" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              echo "✅ **Build validated (not pushed)**" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
