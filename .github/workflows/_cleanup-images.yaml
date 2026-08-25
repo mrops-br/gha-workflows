@@ -50,7 +50,10 @@ on:
         description: 'Regex de tags intocaveis. Tem prioridade sobre qualquer outra regra'
         required: false
         type: string
-        default: '^(latest|dev-latest|v?\d+(\.\d+)*)$'
+        # Sem quantificador aninhado: a acao rejeita `(\.\d+)*` pela heuristica
+        # anti-ReDoS. `[0-9][0-9.]*` cobre 0, 0.2, 0.2.9 e v1.2.3 igual, com um
+        # quantificador so.
+        default: '^(latest|dev-latest|v?[0-9][0-9.]*)$'
       clean-broken-images:
         description: 'Remover indices ja quebrados (fantasmas/parciais) e assinaturas orfas'
         required: false
