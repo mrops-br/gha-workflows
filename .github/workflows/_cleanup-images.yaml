@@ -4,24 +4,27 @@ name: Cleanup Container Images
 # WHY THIS FILE WAS REWRITTEN
 #
 # The previous version used actions/delete-package-versions in TWO independent
-# passes over the same package: one job preserved by tag (protect-semver,
+# passes over the same package: one preserved by tag (protect-semver,
 # custom-ignore-pattern) and another deleted everything untagged
 # (delete-only-untagged-versions: true, min-versions-to-keep: 0).
 #
 # In a multi-architecture image ONLY THE INDEX carries the tag. The per-platform
 # manifests are package versions with no tag at all — that is OCI by design. So
 # the second pass deleted exactly the children the first believed it was
-# protecting, leaving the tag pointing at nothing.
+# protecting, leaving every tag pointing at nothing.
 #
-# Measured against ghcr on 2026-08-25: runner-base with tags latest, 0, 0.2 and
-# 0.2.9 — all covered by protect-semver: true — and every one resolving to a
-# linux/amd64 child returning HTTP 404. Production images were protected and
+# Measured against ghcr on 2026-08-25, this had already destroyed EVERY image in
+# all six packages: runner-base tags latest/0/0.2/0.2.9 (all covered by
+# protect-semver) and dev-latest on petflow-api, petflow-ui, testing-otlp-api,
+# testing-throttling-api and auth-keycloak. Production images were protected and
 # destroyed at the same time.
 #
 # The defect was STRUCTURAL: two passes that cannot see each other. There was no
-# parameter to tune. The fix is a single pass by an action that understands
-# manifest lists, and that also handles cosign signatures, which are separate
-# package versions and were being orphaned.
+# parameter to tune. The fix is a single pass by an action that resolves the
+# index before deciding — dataaxiom/ghcr-cleanup-action builds its candidate set
+# with initFilterSet(), which removes every child manifest and every referrer
+# from consideration, so "untagged" can only ever mean a genuine top-level
+# orphan. That property is the whole reason for the swap.
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -54,11 +57,11 @@ on:
         required: false
         type: string
         default: '^(latest|dev-latest|v?[0-9][0-9.]*)$'
-      clean-broken-images:
-        description: 'Remove already broken indexes (ghost/partial) and orphaned signatures'
+      repair-broken-images:
+        description: 'Also delete already-broken indexes. DESTROYS TAGS - see the repair steps'
         required: false
         type: boolean
-        default: true
+        default: false
       runner:
         description: 'Runner'
         required: false
@@ -123,30 +126,69 @@ jobs:
           log-level: ${{ inputs.log-level }}
 
       # ── Integrity ───────────────────────────────────────────────────────────
-      # This is where the real difference lives. delete-untagged is only safe
-      # because this action resolves the index first: a child of a preserved
-      # image is not "untagged" to it, it is a referenced manifest.
+      # Everything here only ever removes something that carries no tag:
       #
-      # delete-ghost-images and delete-partial-images clean up the dead pointers
-      # the previous implementation left behind.
+      #   delete-untagged         top-level images with zero tags. Safe only
+      #                           because initFilterSet() has already removed
+      #                           every child manifest from the candidate set.
+      #   delete-orphaned-images  cosign sha256-*.sig entries whose subject no
+      #                           longer exists. These are pure litter.
       #
-      # There is deliberately NO exclude-tags here: a ghost image cannot be
-      # pulled by definition, so preserving a tag that points at a missing
-      # manifest only keeps the lie in place.
-      #
-      # validate checks afterwards that every referenced digest is present. It
-      # is the guard against this file repeating the mistake it came to fix.
-      - name: Integrity - untagged, ghost, partial and orphaned signatures
-        if: inputs.clean-broken-images
+      # validate re-reads the package afterwards and warns for every referenced
+      # digest that is missing. It does not delete. It is the tripwire that
+      # would catch this file repeating the mistake it came to fix, and it is
+      # what proved the six packages were already destroyed.
+      - name: Integrity - untagged images and orphaned signatures
         uses: dataaxiom/ghcr-cleanup-action@v1.2.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           owner: ${{ inputs.owner || github.repository_owner }}
           packages: ${{ inputs.image-name }}
           delete-untagged: true
-          delete-ghost-images: true
-          delete-partial-images: true
           delete-orphaned-images: true
+          older-than: ${{ inputs.older-than }}
+          validate: true
+          dry-run: ${{ inputs.dry-run }}
+          log-level: ${{ inputs.log-level }}
+
+      # ── Repair (opt-in, off by default) ─────────────────────────────────────
+      # A ghost image is an index whose platform children are ALL gone; a
+      # partial image is one where only some are. Both are unpullable, and both
+      # usually still carry a tag — including production tags like latest or
+      # 0.2.9. Deleting them removes the tag from ghcr entirely, which is why
+      # this is opt-in and not part of the weekly run: the standing rule is that
+      # production images are never deleted automatically.
+      #
+      # Leaving them in place costs nothing. Rebuilding under the same tag
+      # replaces the index, the dead one becomes untagged, and the integrity
+      # step above collects it on the next pass.
+      #
+      # TWO steps, not one. In cleanup-orchestrator.ts the check reads
+      # `if (deletePartialImages) {...} else if (deleteGhostImages) {...}`, and
+      # findPartialImages() deliberately excludes the all-children-missing case
+      # because that is ghost's job. Setting both in one step therefore silences
+      # ghost detection completely — the earlier version of this file did that
+      # and swept up nothing while appearing to be configured for it.
+      - name: Repair - partial images
+        if: inputs.repair-broken-images
+        uses: dataaxiom/ghcr-cleanup-action@v1.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          owner: ${{ inputs.owner || github.repository_owner }}
+          packages: ${{ inputs.image-name }}
+          delete-partial-images: true
+          older-than: ${{ inputs.older-than }}
+          dry-run: ${{ inputs.dry-run }}
+          log-level: ${{ inputs.log-level }}
+
+      - name: Repair - ghost images
+        if: inputs.repair-broken-images
+        uses: dataaxiom/ghcr-cleanup-action@v1.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          owner: ${{ inputs.owner || github.repository_owner }}
+          packages: ${{ inputs.image-name }}
+          delete-ghost-images: true
           older-than: ${{ inputs.older-than }}
           validate: true
           dry-run: ${{ inputs.dry-run }}
@@ -164,6 +206,6 @@ jobs:
             echo "| Keep per set | ${{ inputs.keep-n }} (dev) + ${{ inputs.keep-n }} (pr) |"
             echo "| Minimum age to delete | ${{ inputs.older-than }} |"
             echo "| Untouchable tags | \`${{ inputs.exclude-tags }}\` |"
-            echo "| Clean broken images | ${{ inputs.clean-broken-images }} |"
+            echo "| Repair broken images | ${{ inputs.repair-broken-images }} |"
             echo "| Dry run | ${{ inputs.dry-run }} |"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -130,12 +130,13 @@ jobs:
       packages: write
       id-token: write
       security-events: write
-      # Exigida pelo job `build` de _build-docker.yaml, para o Trivy.
+      # Required by the `build` job in _build-docker.yaml, for Trivy.
       #
-      # Permissao so ESTREITA descendo a cadeia de workflows. Sem esta linha, o
-      # nivel de baixo pede `actions: read` e nunca recebe, e o GitHub recusa a
-      # execucao inteira com startup_failure — sem criar job nenhum e sem log.
-      # Conceder no repositorio chamador nao resolve: e esta camada que corta.
+      # Permissions only NARROW as they descend the workflow chain. Without this
+      # line the level below asks for `actions: read`, never receives it, and
+      # GitHub refuses the whole run with startup_failure - no job created and
+      # no log at all. Granting it in the calling repository does not help: this
+      # is the layer that cuts it off.
       actions: read
     with:
       image-name: ${{ inputs.image-name }}
