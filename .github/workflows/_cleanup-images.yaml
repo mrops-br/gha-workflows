@@ -1,61 +1,61 @@
 name: Cleanup Container Images
 
 # ─────────────────────────────────────────────────────────────────────────────
-# POR QUE ESTE ARQUIVO FOI REESCRITO
+# WHY THIS FILE WAS REWRITTEN
 #
-# A versao anterior usava `actions/delete-package-versions` em DUAS passagens
-# independentes sobre o mesmo pacote: um job preservava por tag
-# (protect-semver, custom-ignore-pattern) e outro apagava tudo que nao tinha
-# tag (delete-only-untagged-versions: true, min-versions-to-keep: 0).
+# The previous version used actions/delete-package-versions in TWO independent
+# passes over the same package: one job preserved by tag (protect-semver,
+# custom-ignore-pattern) and another deleted everything untagged
+# (delete-only-untagged-versions: true, min-versions-to-keep: 0).
 #
-# Numa imagem multi-arquitetura, SO O INDICE carrega a tag. Os manifestos por
-# plataforma sao package versions sem tag nenhuma — e assim por construcao do
-# OCI. Entao a segunda passagem apagava exatamente os filhos que a primeira
-# achava estar protegendo. Sobrava a tag apontando para nada.
+# In a multi-architecture image ONLY THE INDEX carries the tag. The per-platform
+# manifests are package versions with no tag at all — that is OCI by design. So
+# the second pass deleted exactly the children the first believed it was
+# protecting, leaving the tag pointing at nothing.
 #
-# Medido no ghcr em 25/08/2026: `runner-base` com as tags `latest`, `0`, `0.2`
-# e `0.2.9` — todas cobertas por `protect-semver: true` — e todas com o filho
-# linux/amd64 devolvendo HTTP 404. As imagens de producao estavam protegidas e
-# destruidas ao mesmo tempo.
+# Measured against ghcr on 2026-08-25: runner-base with tags latest, 0, 0.2 and
+# 0.2.9 — all covered by protect-semver: true — and every one resolving to a
+# linux/amd64 child returning HTTP 404. Production images were protected and
+# destroyed at the same time.
 #
-# O defeito era ESTRUTURAL: duas passagens que nao se enxergam. Nao havia
-# parametro a ajustar. A correcao e uma passagem so, feita por uma acao que
-# entende manifest list — e que de quebra sabe lidar com as assinaturas cosign,
-# que tambem sao versoes separadas do pacote.
+# The defect was STRUCTURAL: two passes that cannot see each other. There was no
+# parameter to tune. The fix is a single pass by an action that understands
+# manifest lists, and that also handles cosign signatures, which are separate
+# package versions and were being orphaned.
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
   workflow_call:
     inputs:
       image-name:
-        description: 'Nome do pacote no ghcr (sem o owner)'
+        description: 'Package name on ghcr, without the owner'
         required: true
         type: string
       owner:
-        description: 'Dono do pacote. Vazio = owner do repositorio chamador'
+        description: 'Package owner. Empty means the calling repository owner'
         required: false
         type: string
         default: ''
       keep-n:
-        description: 'Quantas imagens manter em CADA conjunto (dev e pr), da mais nova para a mais velha'
+        description: 'How many images to keep in EACH set (dev and pr), newest first'
         required: false
         type: number
         default: 3
       older-than:
-        description: 'Nada e apagado antes desta idade. Vale para todos os passos'
+        description: 'Nothing is deleted before this age. Applies to every step'
         required: false
         type: string
         default: '14 days'
       exclude-tags:
-        description: 'Regex de tags intocaveis. Tem prioridade sobre qualquer outra regra'
+        # No nested quantifier: the action rejects `(\.\d+)*` with a ReDoS
+        # heuristic. `[0-9][0-9.]*` covers 0, 0.2, 0.2.9 and v1.2.3 just the
+        # same, with a single quantifier.
+        description: 'Regex of untouchable tags. Takes priority over every other rule'
         required: false
         type: string
-        # Sem quantificador aninhado: a acao rejeita `(\.\d+)*` pela heuristica
-        # anti-ReDoS. `[0-9][0-9.]*` cobre 0, 0.2, 0.2.9 e v1.2.3 igual, com um
-        # quantificador so.
         default: '^(latest|dev-latest|v?[0-9][0-9.]*)$'
       clean-broken-images:
-        description: 'Remover indices ja quebrados (fantasmas/parciais) e assinaturas orfas'
+        description: 'Remove already broken indexes (ghost/partial) and orphaned signatures'
         required: false
         type: boolean
         default: true
@@ -65,7 +65,7 @@ on:
         type: string
         default: 'ubuntu-latest'
       dry-run:
-        description: 'So mostra o que faria, sem apagar nada'
+        description: 'Only report what would be deleted, delete nothing'
         required: false
         type: boolean
         default: false
@@ -83,22 +83,24 @@ jobs:
       packages: write
       contents: read
     steps:
-      # ── Retencao ────────────────────────────────────────────────────────────
-      # Dois passos porque `keep-n-tagged` conta dentro do conjunto que
-      # `delete-tags` seleciona. Num passo so, "manter 3" manteria as 3 mais
-      # novas entre dev E pr misturados — o que na pratica apagaria todos os pr
-      # sempre que houvesse tres builds de develop recentes.
+      # ── Retention ───────────────────────────────────────────────────────────
+      # Two steps because keep-n-tagged counts within the set delete-tags
+      # selects. In a single step, "keep three" would keep the three newest
+      # across dev AND pr combined, which in practice deletes every pr image
+      # whenever three develop builds are recent.
       #
-      # Os dois conjuntos sao disjuntos (`dev-*` e `pr-*`), entao continuam
-      # sendo uma passagem coerente sobre o grafo — ao contrario do
-      # "tags versus sem-tag" que quebrava tudo.
-      - name: Retencao — builds de develop
+      # The two sets are disjoint (dev-* and pr-*), so this is still a coherent
+      # reading of the graph — unlike the "tagged versus untagged" split that
+      # broke everything.
+      - name: Retention - develop builds
         uses: dataaxiom/ghcr-cleanup-action@v1.2.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           owner: ${{ inputs.owner || github.repository_owner }}
           packages: ${{ inputs.image-name }}
           use-regex: true
+          # 7 to 40 hex: the real tags carry the full commit sha. The previous
+          # pattern demanded exactly seven and therefore never matched anything.
           delete-tags: '^dev-[0-9a-f]{7,40}$'
           exclude-tags: ${{ inputs.exclude-tags }}
           keep-n-tagged: ${{ inputs.keep-n }}
@@ -106,7 +108,7 @@ jobs:
           dry-run: ${{ inputs.dry-run }}
           log-level: ${{ inputs.log-level }}
 
-      - name: Retencao — builds de pull request
+      - name: Retention - pull request builds
         uses: dataaxiom/ghcr-cleanup-action@v1.2.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -120,21 +122,21 @@ jobs:
           dry-run: ${{ inputs.dry-run }}
           log-level: ${{ inputs.log-level }}
 
-      # ── Integridade ─────────────────────────────────────────────────────────
-      # Aqui mora a diferenca de verdade. `delete-untagged` so e seguro porque
-      # esta acao resolve o indice antes: filho de uma imagem preservada nao e
-      # "sem tag" aos olhos dela, e sim um manifesto referenciado.
+      # ── Integrity ───────────────────────────────────────────────────────────
+      # This is where the real difference lives. delete-untagged is only safe
+      # because this action resolves the index first: a child of a preserved
+      # image is not "untagged" to it, it is a referenced manifest.
       #
-      # `delete-ghost-images` e `delete-partial-images` limpam os ponteiros
-      # mortos que a implementacao anterior deixou para tras.
+      # delete-ghost-images and delete-partial-images clean up the dead pointers
+      # the previous implementation left behind.
       #
-      # NAO ha `exclude-tags` neste passo, de proposito: uma imagem fantasma e
-      # inutilizavel por definicao — nao ha o que preservar numa tag que aponta
-      # para manifesto inexistente. Preserva-la so mantem a mentira no lugar.
+      # There is deliberately NO exclude-tags here: a ghost image cannot be
+      # pulled by definition, so preserving a tag that points at a missing
+      # manifest only keeps the lie in place.
       #
-      # `validate` confere no fim que todo digest referenciado existe. E a rede
-      # de seguranca contra este arquivo repetir o erro que veio consertar.
-      - name: Integridade — sem tag, fantasmas, parciais e assinaturas orfas
+      # validate checks afterwards that every referenced digest is present. It
+      # is the guard against this file repeating the mistake it came to fix.
+      - name: Integrity - untagged, ghost, partial and orphaned signatures
         if: inputs.clean-broken-images
         uses: dataaxiom/ghcr-cleanup-action@v1.2.2
         with:
@@ -150,18 +152,18 @@ jobs:
           dry-run: ${{ inputs.dry-run }}
           log-level: ${{ inputs.log-level }}
 
-      - name: Resumo
+      - name: Summary
         if: always()
         run: |
           {
-            echo "## Limpeza de imagens"
+            echo "## Image cleanup"
             echo ""
-            echo "| Item | Valor |"
+            echo "| Item | Value |"
             echo "|---|---|"
-            echo "| Pacote | \`${{ inputs.image-name }}\` |"
-            echo "| Manter por conjunto | ${{ inputs.keep-n }} (dev) + ${{ inputs.keep-n }} (pr) |"
-            echo "| Idade minima para apagar | ${{ inputs.older-than }} |"
-            echo "| Tags intocaveis | \`${{ inputs.exclude-tags }}\` |"
-            echo "| Limpar imagens quebradas | ${{ inputs.clean-broken-images }} |"
+            echo "| Package | \`${{ inputs.image-name }}\` |"
+            echo "| Keep per set | ${{ inputs.keep-n }} (dev) + ${{ inputs.keep-n }} (pr) |"
+            echo "| Minimum age to delete | ${{ inputs.older-than }} |"
+            echo "| Untouchable tags | \`${{ inputs.exclude-tags }}\` |"
+            echo "| Clean broken images | ${{ inputs.clean-broken-images }} |"
             echo "| Dry run | ${{ inputs.dry-run }} |"
           } >> "$GITHUB_STEP_SUMMARY"
