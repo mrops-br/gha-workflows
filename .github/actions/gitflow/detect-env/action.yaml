@@ -12,10 +12,10 @@ inputs:
 
 outputs:
   environment:
-    description: 'Target environment (dev, stg, prd, or empty)'
+    description: 'Target environment (stg, prd, or empty)'
     value: ${{ steps.detect.outputs.environment }}
   environment-name:
-    description: 'GitHub environment name (development, staging, production, or empty)'
+    description: 'GitHub environment name (staging, production, or empty)'
     value: ${{ steps.detect.outputs.environment-name }}
   should-deploy:
     description: 'Whether automatic deployment should happen'
@@ -50,10 +50,13 @@ runs:
           # Auto-detect based on branch type
           case "$BRANCH_TYPE" in
             develop)
-              ENVIRONMENT="dev"
-              SHOULD_DEPLOY="true"
+              # develop builds and publishes an image and stops there. The
+              # environment it used to deploy to was staging under another
+              # name, and release/* and hotfix/* feed it now.
+              ENVIRONMENT=""
+              SHOULD_DEPLOY="false"
               REQUIRES_APPROVAL="false"
-              echo "✅ Develop branch → dev environment (auto-deploy)"
+              echo "ℹ️ Develop branch → build and publish only, no deployment"
               ;;
 
             release|hotfix)
@@ -81,9 +84,6 @@ runs:
 
         # Map short environment names to full names
         case "$ENVIRONMENT" in
-          dev)
-            ENV_NAME="development"
-            ;;
           stg)
             ENV_NAME="staging"
             ;;

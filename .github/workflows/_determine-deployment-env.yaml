@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       deploy-environment:
-        description: 'Override environment (for manual deployments)'
+        description: 'Override environment (stg or prd, for manual deployments)'
         required: false
         type: string
         default: ''
@@ -49,10 +49,10 @@ on:
         default: ''
     outputs:
       environment:
-        description: 'Target environment (dev, stg, prd, or empty)'
+        description: 'Target environment (stg, prd, or empty)'
         value: ${{ jobs.determine.outputs.environment }}
       environment-name:
-        description: 'GitHub environment name (development, staging, production, or empty)'
+        description: 'GitHub environment name (staging, production, or empty)'
         value: ${{ jobs.determine.outputs.environment-name }}
       should-deploy:
         description: 'Whether deployment should proceed'
@@ -81,33 +81,46 @@ jobs:
             # For manual deploys, extract the first tag from build outputs
             IMAGE_TAG=$(echo "${{ inputs.image-tags }}" | head -1)
 
+          # Push to release/* or hotfix/* → Deploy to STAGING with the RC tag
+          elif [[ "${{ inputs.github-ref }}" =~ ^refs/heads/(release|hotfix)/ ]]; then
+            ENV="stg"
+            SHOULD_DEPLOY="true"
+            # Extract the version-rc tag from build outputs (e.g. 1.2.3-rc)
+            IMAGE_TAG=$(echo "${{ inputs.image-tags }}" | grep -E '[0-9]+\.[0-9]+\.[0-9]+-(hotfix-)?rc' | head -1)
+            if [ -z "$IMAGE_TAG" ]; then
+              IMAGE_TAG="${{ inputs.github-sha }}"
+            fi
+            echo "📦 Release/hotfix branch → Deploy to STAGING with tag: $IMAGE_TAG"
+
           # PR to main from release/* or hotfix/* → Deploy to STAGING with RC tag
+          #
+          # Kept alongside the branch-push case above: the two can fire for the
+          # same commit, but they resolve to the same environment and the same
+          # RC tag, so the second run is a no-op sync rather than a second
+          # deployment. Dropping it would lose the staging refresh for a PR
+          # opened from a branch that stops receiving pushes.
           elif [[ "${{ inputs.event-name }}" == "pull_request" ]] && \
                [[ "${{ inputs.github-base-ref }}" == "main" ]] && \
                [[ "${{ inputs.branch-type }}" =~ ^(release|hotfix)$ ]]; then
             ENV="stg"
             SHOULD_DEPLOY="true"
-            # Extract version-rc tag from build outputs (e.g., 1.2.3-rc)
-            IMAGE_TAG=$(echo "${{ inputs.image-tags }}" | grep -E '[0-9]+\.[0-9]+\.[0-9]+-rc' | head -1)
+            IMAGE_TAG=$(echo "${{ inputs.image-tags }}" | grep -E '[0-9]+\.[0-9]+\.[0-9]+-(hotfix-)?rc' | head -1)
             if [ -z "$IMAGE_TAG" ]; then
               IMAGE_TAG="${{ inputs.github-sha }}"
             fi
             echo "📦 PR to main → Deploy to STAGING with tag: $IMAGE_TAG"
 
-          # Push to develop → Deploy to DEV
+          # Push to develop → build and publish the image, and stop there.
+          #
+          # develop used to deploy to an environment called dev. That
+          # environment was staging all along, and it is now fed by release/*
+          # and hotfix/* instead. The dev-latest and dev-<sha> images are still
+          # built and pushed - what ends is the deployment, not the build.
           elif [ "${{ inputs.github-ref }}" = "refs/heads/develop" ]; then
-            ENV="dev"
-            SHOULD_DEPLOY="true"
-            IMAGE_TAG="dev-${{ inputs.github-sha }}"
-            echo "🚀 Push to develop → Deploy to DEV with tag: $IMAGE_TAG"
-
-          # Push to release/* or hotfix/* branches (not PR) → no auto-deploy
-          # (only PRs to main from these branches deploy to staging)
-          elif [[ "${{ inputs.github-ref }}" =~ ^refs/heads/(release|hotfix)/ ]]; then
             ENV=""
             SHOULD_DEPLOY="false"
             IMAGE_TAG=""
-            echo "ℹ️ Release/hotfix branch push → Build only, no deployment"
+            echo "ℹ️ Push to develop → Build and publish only, no deployment"
 
           # Unknown/other scenarios
           else
@@ -118,9 +131,7 @@ jobs:
           fi
 
           # Map short environment names to full names
-          if [ "$ENV" = "dev" ]; then
-            ENV_NAME="development"
-          elif [ "$ENV" = "stg" ]; then
+          if [ "$ENV" = "stg" ]; then
             ENV_NAME="staging"
           elif [ "$ENV" = "prd" ]; then
             ENV_NAME="production"
