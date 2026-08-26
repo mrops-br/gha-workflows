@@ -13,7 +13,7 @@ on:
       environment:
         description: 'Environment to deploy'
         type: choice
-        options: [dev, stg, prd]
+        options: [stg, prd]
 
 # Prevent duplicate runs: cancel in-progress runs when new commits are pushed
 concurrency:
@@ -63,7 +63,7 @@ jobs:
 
 # What this does:
 # - PRs to develop: Lint, test, build (no push, no deploy)
-# - develop: Lint, test, build, push (dev-latest, dev-<sha>), deploy to DEV
+# - develop: Lint, test, build, push (dev-latest, dev-<sha>), no deploy
 # - release/X.Y.Z branch: Build, push (X.Y.Z-rc), deploy to STG
 # - release/X.Y.Z PR to main: Build and push X.Y.Z-rc image
 # - main merge (from release/*): Automatically:
@@ -85,7 +85,7 @@ jobs:
 # 4. go test -coverprofile (coverage report)
 # 5. gosec (security scanning)
 # 6. Docker image build, sign, scan
-# 7. GitOps deployment to dev/stg (automatic), prd (manual)
+# 7. GitOps deployment to stg (automatic), prd (after the release job)
 #
 # Project structure expected:
 # ├── go.mod

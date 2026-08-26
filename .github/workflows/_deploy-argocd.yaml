@@ -12,11 +12,11 @@ on:
         required: true
         type: string
       environment:
-        description: 'Target environment (dev, stg, prd)'
+        description: 'Target environment (stg, prd)'
         required: true
         type: string
       environment-name:
-        description: 'GitHub environment name (development, staging, production)'
+        description: 'GitHub environment name (staging, production)'
         required: false
         type: string
         default: ''
@@ -86,7 +86,7 @@ jobs:
   sync-argocd:
     name: Sync ArgoCD
     runs-on: ${{ inputs.runner }}
-    environment: ${{ inputs.environment-name != '' && inputs.environment-name || (inputs.environment == 'dev' && 'development' || inputs.environment == 'stg' && 'staging' || 'production') }}
+    environment: ${{ inputs.environment-name != '' && inputs.environment-name || (inputs.environment == 'stg' && 'staging' || 'production') }}
     container:
       image: ghcr.io/mrops-br/runner-base:latest
       credentials:

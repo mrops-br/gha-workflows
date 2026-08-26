@@ -6,10 +6,10 @@ This document explains how to use the Git Flow-aware workflows and composite act
 
 Our workflows are designed to work seamlessly with Git Flow branching strategy:
 
-- **develop** → Auto-deploy to `dev` environment
+- **develop** → Build and publish only, no deployment
 - **release/X.Y.Z** → Auto-deploy to `stg` environment
 - **hotfix/X.Y.Z** → Auto-deploy to `stg` environment
-- **main** → Manual deployment to `prd` environment (+ automated release process)
+- **main** → Deployment to `prd` environment after the automated release
 - **feature/** → Build only, no deployment
 - **PR** → Validation only
 
@@ -71,10 +71,10 @@ Located in `.github/workflows/`:
 
 | Branch Type | Environment | Auto-Deploy | Requires Approval |
 |-------------|-------------|-------------|-------------------|
-| `develop` | `dev` | ✅ Yes | ❌ No |
+| `develop` | - | ❌ Build and publish only | - |
 | `release/*` | `stg` | ✅ Yes | ❌ No |
 | `hotfix/*` | `stg` | ✅ Yes | ❌ No |
-| `main` | `prd` | ❌ Manual | ✅ Yes |
+| `main` | `prd` | ✅ After the release job | ✅ Yes |
 | `feature/*` | - | ❌ No | - |
 
 ## Usage Examples
@@ -136,7 +136,7 @@ on:
     inputs:
       environment:
         type: choice
-        options: [dev, stg, prd]
+        options: [stg, prd]
 
 env:
   APP_NAME: my-nodejs-app
@@ -155,7 +155,7 @@ jobs:
 ```
 
 **What happens:**
-- **develop**: CI → Build → Push → Deploy to `dev`
+- **develop**: CI → Build → Push (no deployment)
 - **release/1.2.0**: CI → Build → Push → Deploy to `stg`
 - **main**: CI → Build → Push → Manual deploy to `prd`
 - **PR**: CI → Build (validation only)
@@ -205,12 +205,12 @@ jobs:
   # Custom deployment (not ArgoCD)
   deploy:
     needs: [detect-gitflow, build]
-    if: needs.detect-gitflow.outputs.branch-type == 'develop'
+    if: needs.detect-gitflow.outputs.branch-type == 'release'
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to custom platform
         run: |
-          echo "Deploying to dev environment..."
+          echo "Deploying to stg environment..."
           # Your custom deployment logic here
 ```
 
@@ -414,7 +414,7 @@ jobs:
 1. **Always use Git Flow branches** - The workflows expect standard Git Flow patterns
 2. **Version format** - Use semantic versioning: `X.Y.Z` (e.g., `1.2.3`)
 3. **RC images** - Always create release branches and build RC images before merging to main
-4. **Test in develop** - Thoroughly test in develop before creating release branch
+4. **Test on develop** - Thoroughly test on develop before creating a release branch; staging is fed by the release branch, not by develop
 5. **Changelog** - Enable changelog generation for better release notes
 6. **Secrets** - Configure secrets at organization level for consistency
 

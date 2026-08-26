@@ -138,10 +138,11 @@ The single workflow file automatically handles different scenarios:
 | Trigger | Behavior |
 |---------|----------|
 | **PR to develop** | Build only (validation, no push, no deploy) |
-| **Push to develop** | Build, push (`dev-latest`, `dev-<sha>`), deploy to DEV |
+| **Push to develop** | Build, push (`dev-latest`, `dev-<sha>`), no deploy |
+| **Push to release/hotfix** | Build, push (`X.Y.Z-rc`), deploy to STAGING |
 | **PR to main** (from release/hotfix) | Build, push (`X.Y.Z-rc`), deploy to STAGING |
 | **Merge to main** | Retag rc→final version, create release, deploy to PRODUCTION |
-| **Manual trigger** | Deploy to chosen environment (dev/stg/prd) |
+| **Manual trigger** | Deploy to chosen environment (stg/prd) |
 
 No separate workflows needed - the pipeline detects the Git Flow context automatically!
 

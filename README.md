@@ -55,7 +55,7 @@ These workflows handle the complete CI/CD flow: CI → Build → Deploy
 | `_pipeline-python.yaml` | Python | Lint (ruff, black) → Type Check (mypy) → Test (pytest) → Build → Deploy |
 
 **Features:**
-- ✅ Automatic environment detection (develop → dev, release/* → stg, main → prd)
+- ✅ Automatic environment detection (release/* and hotfix/* → stg, main → prd)
 - ✅ Git Flow support (develop, release/*, hotfix/*, main)
 - ✅ Image tagging strategy built-in
 - ✅ Security scanning with Trivy
@@ -96,7 +96,7 @@ on:
     inputs:
       environment:
         type: choice
-        options: [dev, stg, prd]
+        options: [stg, prd]
 
 env:
   APP_NAME: my-go-app
@@ -184,7 +184,7 @@ jobs:
 | `enable-lint` | ❌ | `true` | Enable linting |
 | `enable-test` | ❌ | `true` | Enable testing |
 | `enable-coverage` | ❌ | `true` | Enable coverage reporting |
-| `deploy-environment` | ❌ | auto-detect | Override environment (dev, stg, prd) |
+| `deploy-environment` | ❌ | auto-detect | Override environment (stg, prd) |
 
 ### Go-Specific Inputs
 
@@ -213,11 +213,15 @@ Pipelines automatically detect the target environment based on the branch:
 
 | Branch Pattern | Environment | Image Tag | Auto-Deploy |
 |---------------|-------------|-----------|-------------|
-| `develop` | `dev` | `dev-latest` | ✅ Yes |
+| `develop` | - | `dev-latest` | ❌ Build and publish only |
 | `release/*` | `stg` | `X.Y.Z-rc` | ✅ Yes |
 | `hotfix/*` | `stg` | `X.Y.Z-hotfix-rc` | ✅ Yes |
-| `main` | `prd` | `latest`, `vX.Y.Z` | ❌ Manual only |
+| `main` | `prd` | `latest`, `vX.Y.Z` | ✅ After the release job |
 | Pull Request | - | `pr-<number>` | ❌ No deploy |
+
+`develop` still builds and publishes `dev-latest` and `dev-<sha>`; what it no
+longer does is deploy. The environment it used to deploy to was staging under
+another name, and release and hotfix branches feed it now.
 
 Override with `workflow_dispatch` input:
 ```yaml
@@ -225,7 +229,7 @@ workflow_dispatch:
   inputs:
     environment:
       type: choice
-      options: [dev, stg, prd]
+      options: [stg, prd]
 ```
 
 ## Required Secrets
@@ -308,15 +312,15 @@ jobs:
 
   deploy:
     needs: build
-    if: github.ref == 'refs/heads/develop'
+    if: startsWith(github.ref, 'refs/heads/release/')
     uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
     with:
       app-name: my-app
-      argocd-app-name: my-project-dev-my-app
+      argocd-app-name: my-project-stg-my-app
       image-name: ${{ github.repository_owner }}/my-app
-      environment: dev
+      environment: stg
       gitops-repo: ${{ github.repository_owner }}/gitops-my-project
-      image-tag: dev-latest
+      image-tag: 1.2.0-rc
     secrets: inherit
 ```
 
@@ -342,14 +346,14 @@ jobs:
       app-name: my-app
       push: true
 
-  deploy-dev:
+  deploy-stg:
     needs: build
-    if: github.ref == 'refs/heads/develop'
+    if: startsWith(github.ref, 'refs/heads/release/')
     uses: ./_deploy-argocd.yaml@main
     with:
       app-name: my-app
-      environment: dev
-      image-tag: dev-latest
+      environment: stg
+      image-tag: 1.2.0-rc
 ```
 
 **After (25 lines):**

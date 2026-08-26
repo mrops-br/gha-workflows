@@ -14,7 +14,6 @@ on:
         description: 'Environment to deploy'
         type: choice
         options:
-          - dev
           - stg
           - prd
         required: false
@@ -66,10 +65,10 @@ jobs:
       build-runner: 'shared-runners'
 
 # Git Flow behavior:
-# develop → Lint, test, build, push (dev-latest), deploy to dev
+# develop → Lint, test, build, push (dev-latest), no deploy
 # release/1.2.0 → Lint, test, build, push (1.2.0-rc), deploy to stg
 # hotfix/1.2.1 → Lint, test, build, push (1.2.1-hotfix-rc), deploy to stg
-# main → Lint, test, build, push (latest), manual deploy to prd
+# main → Lint, test, build, push (latest), deploy to prd after the release
 # PR → Lint, test, build (validate only, no push/deploy)
 
 # GitOps Integration:

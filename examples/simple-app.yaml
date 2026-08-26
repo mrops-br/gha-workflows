@@ -7,7 +7,9 @@ on:
   push:
     branches:
       - main          # Production (manual deploy only)
-      - develop       # Development (auto-deploy to dev)
+      - develop       # Build and publish only, no deploy
+      - 'release/**'  # Auto-deploy to stg
+      - 'hotfix/**'   # Auto-deploy to stg
   pull_request:
     branches:
       - main
@@ -18,7 +20,6 @@ on:
         description: 'Environment to deploy to'
         type: choice
         options:
-          - dev
           - stg
           - prd
         required: false
@@ -84,10 +85,10 @@ jobs:
 
 # How it works (Git Flow):
 # ──────────────────────────────────────────────────────────────
-# develop branch       → Auto-deploy to DEV   (tag: dev-latest)
-# release/X.Y.Z branch → Auto-deploy to STG   (tag: X.Y.Z-rc)
-# hotfix/X.Y.Z branch  → Auto-deploy to STG   (tag: X.Y.Z-hotfix-rc)
-# main branch          → Manual deploy to PRD (tag: latest, vX.Y.Z)
+# develop branch       → Build and publish only (tag: dev-latest)
+# release/X.Y.Z branch → Auto-deploy to STG     (tag: X.Y.Z-rc)
+# hotfix/X.Y.Z branch  → Auto-deploy to STG     (tag: X.Y.Z-hotfix-rc)
+# main branch          → Deploy to PRD after the release (tag: latest, vX.Y.Z)
 # Pull requests        → Build only, no deploy
 #
 # Manual deploy:

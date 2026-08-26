@@ -218,7 +218,7 @@ jobs:
       github-base-ref: ${{ github.base_ref }}
       github-sha: ${{ github.sha }}
 
-  # Step 6: Deploy to Environment (dev/stg only, prd is manual)
+  # Step 6: Deploy to Environment (stg only; prd runs after the release below)
   deploy:
     name: Deploy to ${{ needs.determine-env.outputs.environment }}
     needs: [build, detect-context, determine-env]

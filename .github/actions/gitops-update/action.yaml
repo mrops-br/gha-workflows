@@ -6,7 +6,7 @@ inputs:
     description: 'GitOps repository (e.g., org/gitops-devportal)'
     required: true
   app-path:
-    description: 'Path to application in gitops repo (e.g., devportal-api/dev)'
+    description: 'Path to application in gitops repo (e.g., devportal-api/overlays/stg)'
     required: true
   image:
     description: 'Full image reference (e.g., ghcr.io/org/app)'
