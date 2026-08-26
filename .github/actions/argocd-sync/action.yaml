@@ -47,16 +47,61 @@ runs:
         ARGOCD_SERVER: ${{ inputs.argocd-server }}
         ARGOCD_AUTH_TOKEN: ${{ inputs.argocd-token }}
         ARGOCD_OPTS: "--plaintext"
+        APP_NAME: ${{ inputs.app-name }}
       run: |
-        # Validate ArgoCD Server variable and verify credentials
+        # Validate ARGOCD_SERVER and prove the session actually works.
+        #
+        # `argocd account get-user-info` is NOT a credential check. It exits 0
+        # even when the server rejects the session, printing only
+        # "Logged In: false". The previous version of this step ran exactly
+        # that and passed, so a token signed by a different ArgoCD sailed
+        # through and blew up two steps later in `app sync`, reported as a
+        # runner failure instead of an auth failure.
+        #
+        # Measured against argocd v3.2.0:
+        #   no token            -> "Logged In: false", exit 0
+        #   wrong signature     -> "Logged In: false", exit 0
+        #   valid token         -> "Logged In: true",  exit 0
+        #   `argocd app get`    -> exit 20 on Unauthenticated
+        #
+        # So this gates on two things: the session is recognised, and the token
+        # can actually read the application it is about to sync. The second
+        # also covers the case of a valid token whose RBAC does not reach this
+        # app - which would fail the sync just the same.
+        set -o pipefail
+
         if [ -z "$ARGOCD_SERVER" ]; then
           echo "ERROR: ARGOCD_SERVER is empty"
           exit 1
         fi
 
-        # Verify credentials with gRPC-web
-        echo "Verifying ArgoCD credentials..."
-        argocd account get-user-info
+        echo "Verifying ArgoCD credentials against $ARGOCD_SERVER ..."
+
+        if ! USER_INFO="$(argocd account get-user-info 2>&1)"; then
+          echo "ERROR: could not reach ArgoCD at $ARGOCD_SERVER"
+          echo "$USER_INFO"
+          exit 1
+        fi
+        echo "$USER_INFO"
+
+        if ! grep -qi '^Logged In:[[:space:]]*true' <<<"$USER_INFO"; then
+          echo "ERROR: ArgoCD did not accept the token."
+          echo "  The session is anonymous, so every later step would fail."
+          echo "  Usual causes: ARGOCD_AUTH_TOKEN is empty, expired, revoked,"
+          echo "  or was issued by a DIFFERENT ArgoCD instance - a token is"
+          echo "  signed with that server's key, so pointing at another"
+          echo "  cluster gives 'token signature is invalid'."
+          exit 1
+        fi
+
+        if ! APP_CHECK="$(argocd app get "$APP_NAME" -o name 2>&1)"; then
+          echo "ERROR: authenticated, but cannot read application '$APP_NAME'."
+          echo "  Either the application does not exist on this ArgoCD, or the"
+          echo "  account lacks RBAC for it. The sync below would fail anyway."
+          echo "$APP_CHECK"
+          exit 1
+        fi
+        echo "Credentials OK - '$APP_NAME' is readable."
 
     - name: Sync application
       shell: bash
