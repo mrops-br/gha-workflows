@@ -59,10 +59,11 @@ runs:
         # runner failure instead of an auth failure.
         #
         # Measured against argocd v3.2.0:
-        #   no token            -> "Logged In: false", exit 0
-        #   wrong signature     -> "Logged In: false", exit 0
-        #   valid token         -> "Logged In: true",  exit 0
-        #   `argocd app get`    -> exit 20 on Unauthenticated
+        #   no token                     -> "Logged In: false", exit 0
+        #   wrong signature              -> "Logged In: false", exit 0
+        #   valid token                  -> "Logged In: true",  exit 0
+        #   `argocd app get` unreadable  -> exit 20
+        #   `argocd app get` readable    -> exit 0
         #
         # So this gates on two things: the session is recognised, and the token
         # can actually read the application it is about to sync. The second
@@ -94,7 +95,10 @@ runs:
           exit 1
         fi
 
-        if ! APP_CHECK="$(argocd app get "$APP_NAME" -o name 2>&1)"; then
+        # -o json, not -o name: `argocd app get` accepts only
+        # json|yaml|wide|tree. `argocd app list` does accept `name`, which is
+        # what made this look reasonable - they are different commands.
+        if ! APP_CHECK="$(argocd app get "$APP_NAME" -o json 2>&1 >/dev/null)"; then
           echo "ERROR: authenticated, but cannot read application '$APP_NAME'."
           echo "  Either the application does not exist on this ArgoCD, or the"
           echo "  account lacks RBAC for it. The sync below would fail anyway."
