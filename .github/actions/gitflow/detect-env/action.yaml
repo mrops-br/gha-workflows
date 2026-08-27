@@ -60,10 +60,17 @@ runs:
               ;;
 
             release|hotfix)
+              # Staging is gated on an open pull request to main, and this
+              # action cannot see the event - only the branch type. So it names
+              # the environment and leaves the decision to the caller.
+              #
+              # Nothing in the organisation references this action; the rule
+              # that runs is in _determine-deployment-env.yaml. Kept in step
+              # with it so the two never disagree if it comes back into use.
               ENVIRONMENT="stg"
-              SHOULD_DEPLOY="true"
+              SHOULD_DEPLOY="false"
               REQUIRES_APPROVAL="false"
-              echo "✅ Release/Hotfix branch → stg environment (auto-deploy)"
+              echo "ℹ️ Release/Hotfix branch → stg environment (deploys only from a PR to main)"
               ;;
 
             main)

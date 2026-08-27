@@ -81,34 +81,42 @@ jobs:
             # For manual deploys, extract the first tag from build outputs
             IMAGE_TAG=$(echo "${{ inputs.image-tags }}" | head -1)
 
-          # Push to release/* or hotfix/* → Deploy to STAGING with the RC tag
-          elif [[ "${{ inputs.github-ref }}" =~ ^refs/heads/(release|hotfix)/ ]]; then
-            ENV="stg"
-            SHOULD_DEPLOY="true"
-            # Extract the version-rc tag from build outputs (e.g. 1.2.3-rc)
-            IMAGE_TAG=$(echo "${{ inputs.image-tags }}" | grep -E '[0-9]+\.[0-9]+\.[0-9]+-(hotfix-)?rc' | head -1)
-            if [ -z "$IMAGE_TAG" ]; then
-              IMAGE_TAG="${{ inputs.github-sha }}"
-            fi
-            echo "📦 Release/hotfix branch → Deploy to STAGING with tag: $IMAGE_TAG"
-
-          # PR to main from release/* or hotfix/* → Deploy to STAGING with RC tag
+          # PR to main from release/* or hotfix/* → Deploy to STAGING
           #
-          # Kept alongside the branch-push case above: the two can fire for the
-          # same commit, but they resolve to the same environment and the same
-          # RC tag, so the second run is a no-op sync rather than a second
-          # deployment. Dropping it would lose the staging refresh for a PR
-          # opened from a branch that stops receiving pushes.
+          # The open pull request is the gate: staging holds the candidate that
+          # is actually being proposed for release, and it refreshes on every
+          # push to the branch because pull_request re-fires on synchronize.
+          # Pushing a release branch with no PR open builds and publishes the
+          # image and stops there.
           elif [[ "${{ inputs.event-name }}" == "pull_request" ]] && \
                [[ "${{ inputs.github-base-ref }}" == "main" ]] && \
                [[ "${{ inputs.branch-type }}" =~ ^(release|hotfix)$ ]]; then
             ENV="stg"
             SHOULD_DEPLOY="true"
-            IMAGE_TAG=$(echo "${{ inputs.image-tags }}" | grep -E '[0-9]+\.[0-9]+\.[0-9]+-(hotfix-)?rc' | head -1)
+
+            # Anchored, and requiring the sha suffix, so this can only ever
+            # select the immutable per-commit tag. The moving -rc-latest tag is
+            # published alongside it and matches the same prefix; deploying that
+            # one leaves the GitOps value unchanged, which produces no commit and
+            # therefore no rollout - the pod keeps the previous image while every
+            # step reports success.
+            IMAGE_TAG=$(echo "${{ inputs.image-tags }}" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+-(hotfix-)?rc-[0-9a-f]{7,40}$' | head -1)
             if [ -z "$IMAGE_TAG" ]; then
-              IMAGE_TAG="${{ inputs.github-sha }}"
+              echo "❌ No immutable RC tag among the build outputs:"
+              echo "${{ inputs.image-tags }}"
+              echo "Deploying without one would either fail to pull or silently"
+              echo "reuse the running image. Refusing."
+              exit 1
             fi
             echo "📦 PR to main → Deploy to STAGING with tag: $IMAGE_TAG"
+
+          # Push to release/* or hotfix/* with no PR open → build and publish,
+          # no deployment. Opening the PR to main is what feeds staging.
+          elif [[ "${{ inputs.github-ref }}" =~ ^refs/heads/(release|hotfix)/ ]]; then
+            ENV=""
+            SHOULD_DEPLOY="false"
+            IMAGE_TAG=""
+            echo "ℹ️ Release/hotfix branch push → Build and publish only, no deployment"
 
           # Push to develop → build and publish the image, and stop there.
           #
