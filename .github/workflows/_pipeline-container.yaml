@@ -88,10 +88,38 @@ on:
         type: string
         default: 'ubuntu-latest'
       build-runner:
-        description: 'Runner for build jobs'
+        description: 'Runner for build and deploy jobs'
         required: false
         type: string
         default: 'shared-runners'
+
+      # --- Deployment (opt-in) ---
+      #
+      # Off by default so container repositories that only publish an image --
+      # runner images, base images -- keep the pipeline they already have.
+      # Turning it on makes this workflow behave like the golang and nodejs
+      # ones: release/* and hotfix/* deploy to staging, and a merge to main
+      # deploys to production after the release.
+      enable-deploy:
+        description: 'Enable the ArgoCD deployment jobs'
+        required: false
+        type: boolean
+        default: false
+      app-name:
+        description: 'Application name, e.g. keycloak (required when enable-deploy)'
+        required: false
+        type: string
+        default: ''
+      project-name:
+        description: 'Project name; selects gitops-<project-name> and the ArgoCD app prefix'
+        required: false
+        type: string
+        default: ''
+      deploy-environment:
+        description: 'Environment to deploy (auto-detected from the branch if not set)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   # Step 1: Lint Dockerfile
@@ -152,7 +180,54 @@ jobs:
       runner: ${{ inputs.build-runner }}
     secrets: inherit
 
-  # Step 4: Release (on main branch merge)
+  # Step 4: Determine environment for deployment
+  determine-env:
+    name: Determine Environment
+    needs: [build, detect-context]
+    if: |
+      always() &&
+      inputs.enable-deploy &&
+      needs.build.result == 'success' &&
+      needs.detect-context.outputs.should-push == 'true'
+    uses: mrops-br/gha-workflows/.github/workflows/_determine-deployment-env.yaml@main
+    with:
+      deploy-environment: ${{ inputs.deploy-environment }}
+      branch-type: ${{ needs.detect-context.outputs.branch-type }}
+      is-main-merge: ${{ needs.detect-context.outputs.is-main-merge }}
+      should-push: ${{ needs.detect-context.outputs.should-push }}
+      image-tags: ${{ needs.build.outputs.image-tags }}
+      event-name: ${{ github.event_name }}
+      github-ref: ${{ github.ref }}
+      github-base-ref: ${{ github.base_ref }}
+      github-sha: ${{ github.sha }}
+
+  # Step 5: Deploy to Environment (staging only; production runs after release)
+  deploy:
+    name: Deploy to ${{ needs.determine-env.outputs.environment }}
+    needs: [build, detect-context, determine-env]
+    if: |
+      inputs.enable-deploy &&
+      needs.determine-env.outputs.should-deploy == 'true' &&
+      needs.determine-env.outputs.environment != ''
+    uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
+    with:
+      app-name: ${{ inputs.app-name }}
+      argocd-app-name: ${{ inputs.project-name }}-${{ needs.determine-env.outputs.environment }}-${{ inputs.app-name }}
+      image-name: ${{ inputs.image-name }}
+      environment: ${{ needs.determine-env.outputs.environment }}
+      environment-name: ${{ needs.determine-env.outputs.environment-name }}
+      gitops-repo: ${{ github.repository_owner }}/gitops-${{ inputs.project-name }}
+      image-tag: ${{ needs.determine-env.outputs.image-tag }}
+      registry: ${{ inputs.registry }}
+      wait-for-sync: true
+      runner: ${{ inputs.build-runner }}
+    secrets:
+      ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+      ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+      CICD_USERNAME: ${{ secrets.CICD_USERNAME }}
+      CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+
+  # Step 6: Release (on main branch merge)
   release:
     name: Release
     needs: [detect-context]
@@ -177,10 +252,36 @@ jobs:
       enable-merge-back: true
       runner: ${{ inputs.lint-runner }}
 
+  # Step 7: Deploy to Production (after a successful release)
+  deploy-production:
+    name: Deploy to Production
+    needs: [detect-context, release]
+    if: |
+      inputs.enable-deploy &&
+      needs.detect-context.outputs.is-main-merge == 'true' &&
+      needs.release.result == 'success'
+    uses: mrops-br/gha-workflows/.github/workflows/_deploy-argocd.yaml@main
+    with:
+      app-name: ${{ inputs.app-name }}
+      argocd-app-name: ${{ inputs.project-name }}-prd-${{ inputs.app-name }}
+      image-name: ${{ inputs.image-name }}
+      environment: prd
+      environment-name: production
+      gitops-repo: ${{ github.repository_owner }}/gitops-${{ inputs.project-name }}
+      image-tag: ${{ needs.release.outputs.version }}
+      registry: ${{ inputs.registry }}
+      wait-for-sync: true
+      runner: ${{ inputs.build-runner }}
+    secrets:
+      ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+      ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+      CICD_USERNAME: ${{ secrets.CICD_USERNAME }}
+      CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+
   # Summary
   summary:
     name: Pipeline Summary
-    needs: [lint, detect-context, build, release]
+    needs: [lint, detect-context, build, determine-env, deploy, release, deploy-production]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -196,6 +297,10 @@ jobs:
           echo "| Lint | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Release | ${{ needs.release.result }} |" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ inputs.enable-deploy }}" == "true" ]]; then
+            echo "| Deploy (${{ needs.determine-env.outputs.environment }}) | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Deploy (prd) | ${{ needs.deploy-production.result }} |" >> $GITHUB_STEP_SUMMARY
+          fi
 
           if [[ "${{ needs.detect-context.outputs.is-main-merge }}" == "true" ]]; then
             if [[ "${{ needs.release.result }}" == "success" ]]; then
