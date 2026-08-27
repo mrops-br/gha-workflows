@@ -52,11 +52,18 @@ on:
       exclude-tags:
         # No nested quantifier: the action rejects `(\.\d+)*` with a ReDoS
         # heuristic. `[0-9][0-9.]*` covers 0, 0.2, 0.2.9 and v1.2.3 just the
-        # same, with a single quantifier.
+        # same, with a single quantifier. The rc-latest alternatives are spelled
+        # out rather than written as `-(hotfix-)?rc-latest` for the same reason:
+        # no quantified group anywhere in the pattern.
+        #
+        # <version>-rc-latest is the moving pointer at the newest release
+        # candidate. It is never deployed - the per-commit tag is - but it is
+        # what the promotion to production retags from, so losing it breaks the
+        # release.
         description: 'Regex of untouchable tags. Takes priority over every other rule'
         required: false
         type: string
-        default: '^(latest|dev-latest|v?[0-9][0-9.]*)$'
+        default: '^(latest|dev-latest|v?[0-9][0-9.]*|v?[0-9][0-9.]*-rc-latest|v?[0-9][0-9.]*-hotfix-rc-latest)$'
       repair-broken-images:
         description: 'Also delete already-broken indexes. DESTROYS TAGS - see the repair steps'
         required: false
@@ -119,6 +126,43 @@ jobs:
           packages: ${{ inputs.image-name }}
           use-regex: true
           delete-tags: '^pr-[0-9]+$'
+          exclude-tags: ${{ inputs.exclude-tags }}
+          keep-n-tagged: ${{ inputs.keep-n }}
+          older-than: ${{ inputs.older-than }}
+          dry-run: ${{ inputs.dry-run }}
+          log-level: ${{ inputs.log-level }}
+
+      # Release candidates are per-commit now, so an active release branch
+      # produces one image per push instead of overwriting a single tag. Without
+      # these two steps they match no delete rule at all and accumulate forever.
+      #
+      # Release and hotfix are separate for the reason given above: keep-n-tagged
+      # counts inside the set delete-tags selects, so sharing one step would let
+      # three recent release candidates evict every hotfix candidate. The two
+      # patterns are disjoint - after the version, one requires `-rc-` and the
+      # other `-hotfix-rc-`.
+      - name: Retention - release candidates
+        uses: dataaxiom/ghcr-cleanup-action@v1.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          owner: ${{ inputs.owner || github.repository_owner }}
+          packages: ${{ inputs.image-name }}
+          use-regex: true
+          delete-tags: '^[0-9]+\.[0-9]+\.[0-9]+-rc-[0-9a-f]{7,40}$'
+          exclude-tags: ${{ inputs.exclude-tags }}
+          keep-n-tagged: ${{ inputs.keep-n }}
+          older-than: ${{ inputs.older-than }}
+          dry-run: ${{ inputs.dry-run }}
+          log-level: ${{ inputs.log-level }}
+
+      - name: Retention - hotfix candidates
+        uses: dataaxiom/ghcr-cleanup-action@v1.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          owner: ${{ inputs.owner || github.repository_owner }}
+          packages: ${{ inputs.image-name }}
+          use-regex: true
+          delete-tags: '^[0-9]+\.[0-9]+\.[0-9]+-hotfix-rc-[0-9a-f]{7,40}$'
           exclude-tags: ${{ inputs.exclude-tags }}
           keep-n-tagged: ${{ inputs.keep-n }}
           older-than: ${{ inputs.older-than }}
@@ -203,7 +247,7 @@ jobs:
             echo "| Item | Value |"
             echo "|---|---|"
             echo "| Package | \`${{ inputs.image-name }}\` |"
-            echo "| Keep per set | ${{ inputs.keep-n }} (dev) + ${{ inputs.keep-n }} (pr) |"
+            echo "| Keep per set | ${{ inputs.keep-n }} each: dev, pr, rc, hotfix-rc |"
             echo "| Minimum age to delete | ${{ inputs.older-than }} |"
             echo "| Untouchable tags | \`${{ inputs.exclude-tags }}\` |"
             echo "| Repair broken images | ${{ inputs.repair-broken-images }} |"
