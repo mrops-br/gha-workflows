@@ -116,7 +116,12 @@ runs:
       with:
         branch-type: ${{ steps.gitflow.outputs.branch-type }}
         version: ${{ steps.gitflow.outputs.version }}
-        sha: ${{ github.sha }}
+        # On a pull_request, github.sha is the ephemeral refs/pull/N/merge
+        # commit, which exists in no branch and changes whenever the base moves.
+        # The head sha is the one a person can check out, and it is what makes
+        # the deployed tag traceable. The image is still built from the merge
+        # commit, so the two differ in content when the base has moved ahead.
+        sha: ${{ github.event.pull_request.head.sha || github.sha }}
         event-name: ${{ github.event_name }}
         pr-number: ${{ github.event.pull_request.number }}
 

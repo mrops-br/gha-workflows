@@ -16,7 +16,7 @@ outputs:
     description: 'Detected version (e.g., 1.2.3)'
     value: ${{ steps.detect.outputs.version }}
   source-tag:
-    description: 'Source tag for retagging (e.g., 1.2.3-rc, 1.2.3-hotfix-rc)'
+    description: 'Source tag for retagging (e.g., 1.2.3-rc-latest, 1.2.3-hotfix-rc-latest)'
     value: ${{ steps.detect.outputs.source-tag }}
   is-release:
     description: 'Whether this is a release branch'
@@ -68,12 +68,12 @@ runs:
           # Try to extract from "Merge branch 'release/X.Y.Z'" or "Merge pull request ... from .../release/X.Y.Z"
           if [[ "$COMMIT_MSG" =~ release/([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             VERSION="${BASH_REMATCH[1]}"
-            SOURCE_TAG="${VERSION}-rc"
+            SOURCE_TAG="${VERSION}-rc-latest"
             IS_RELEASE="true"
             echo "✅ Detected release version: $VERSION (source: $SOURCE_TAG)"
           elif [[ "$COMMIT_MSG" =~ hotfix/([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             VERSION="${BASH_REMATCH[1]}"
-            SOURCE_TAG="${VERSION}-hotfix-rc"
+            SOURCE_TAG="${VERSION}-hotfix-rc-latest"
             IS_HOTFIX="true"
             echo "✅ Detected hotfix version: $VERSION (source: $SOURCE_TAG)"
           else
@@ -87,14 +87,14 @@ runs:
         elif [[ "$BRANCH" =~ ^release/(.+) ]]; then
           BRANCH_TYPE="release"
           VERSION="${BASH_REMATCH[1]}"
-          SOURCE_TAG="${VERSION}-rc"
+          SOURCE_TAG="${VERSION}-rc-latest"
           IS_RELEASE="true"
           echo "✅ Release branch detected: version=$VERSION, tag=$SOURCE_TAG"
 
         elif [[ "$BRANCH" =~ ^hotfix/(.+) ]]; then
           BRANCH_TYPE="hotfix"
           VERSION="${BASH_REMATCH[1]}"
-          SOURCE_TAG="${VERSION}-hotfix-rc"
+          SOURCE_TAG="${VERSION}-hotfix-rc-latest"
           IS_HOTFIX="true"
           echo "✅ Hotfix branch detected: version=$VERSION, tag=$SOURCE_TAG"
 

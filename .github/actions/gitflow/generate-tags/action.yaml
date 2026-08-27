@@ -44,12 +44,16 @@ runs:
         VERSION="${{ inputs.version }}"
         SHA="${{ inputs.sha }}"
         EVENT="${{ inputs.event-name }}"
+
+        # Callers pass the full 40-character sha even though the input is
+        # described as short, so shorten it here rather than at every call site.
+        SHORT_SHA="${SHA:0:7}"
         PR_NUMBER="${{ inputs.pr-number }}"
 
         echo "Generating tags for:"
         echo "  Branch type: $BRANCH_TYPE"
         echo "  Version: $VERSION"
-        echo "  SHA: $SHA"
+        echo "  SHA: $SHA (short: $SHORT_SHA)"
         echo "  Event: $EVENT"
 
         case "$BRANCH_TYPE" in
@@ -78,10 +82,14 @@ runs:
 
           release)
             if [ -n "$VERSION" ]; then
-              TAGS+=("${VERSION}-rc")
-              TAGS+=("$SHA")
-              PRIMARY_TAG="${VERSION}-rc"
-              echo "✅ Release branch: ${VERSION}-rc, $SHA"
+              # The per-commit tag is what gets deployed. A moving tag makes the
+              # GitOps step rewrite the value it already found, which produces no
+              # commit, so ArgoCD syncs an identical manifest and the pod keeps
+              # the previous image while every step reports success.
+              TAGS+=("${VERSION}-rc-${SHORT_SHA}")
+              TAGS+=("${VERSION}-rc-latest")
+              PRIMARY_TAG="${VERSION}-rc-${SHORT_SHA}"
+              echo "✅ Release branch: ${VERSION}-rc-${SHORT_SHA}, ${VERSION}-rc-latest"
             else
               echo "❌ Release branch without version"
               exit 1
@@ -90,10 +98,10 @@ runs:
 
           hotfix)
             if [ -n "$VERSION" ]; then
-              TAGS+=("${VERSION}-hotfix-rc")
-              TAGS+=("$SHA")
-              PRIMARY_TAG="${VERSION}-hotfix-rc"
-              echo "✅ Hotfix branch: ${VERSION}-hotfix-rc, $SHA"
+              TAGS+=("${VERSION}-hotfix-rc-${SHORT_SHA}")
+              TAGS+=("${VERSION}-hotfix-rc-latest")
+              PRIMARY_TAG="${VERSION}-hotfix-rc-${SHORT_SHA}"
+              echo "✅ Hotfix branch: ${VERSION}-hotfix-rc-${SHORT_SHA}, ${VERSION}-hotfix-rc-latest"
             else
               echo "❌ Hotfix branch without version"
               exit 1
