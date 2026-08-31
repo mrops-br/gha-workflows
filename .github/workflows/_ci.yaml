@@ -60,7 +60,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup
         if: inputs.setup-command != ''
@@ -79,7 +79,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup
         if: inputs.setup-command != ''
@@ -97,7 +97,7 @@ jobs:
       security-events: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master

@@ -43,7 +43,7 @@ jobs:
       is-main-merge: ${{ steps.push.outputs.is-main-merge }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
 
