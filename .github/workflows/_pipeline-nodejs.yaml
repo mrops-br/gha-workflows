@@ -155,7 +155,7 @@ jobs:
     runs-on: ${{ inputs.lint-runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Lint Dockerfile
         uses: mrops-br/gha-workflows/.github/actions/quality/lint-dockerfile@main

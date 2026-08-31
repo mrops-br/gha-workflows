@@ -73,7 +73,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Lint Dockerfile
         uses: mrops-br/gha-workflows/.github/actions/quality/lint-dockerfile@main
@@ -90,7 +90,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Run setup command
         if: inputs.custom-setup-command != ''
@@ -108,7 +108,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Run setup command
         if: inputs.custom-setup-command != ''

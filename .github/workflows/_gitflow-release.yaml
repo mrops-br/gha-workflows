@@ -119,7 +119,7 @@ jobs:
       source-tag: ${{ steps.version.outputs.source-tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 10
 
@@ -176,7 +176,7 @@ jobs:
           private-key: ${{ secrets.CICD_PRIVATE_KEY }}
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ steps.generate-token.outputs.token }}
@@ -217,7 +217,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Generate semver tags
         id: semver
@@ -293,7 +293,7 @@ jobs:
           private-key: ${{ secrets.CICD_PRIVATE_KEY }}
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main
           token: ${{ steps.generate-token.outputs.token }}
@@ -321,7 +321,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -373,7 +373,7 @@ jobs:
           private-key: ${{ secrets.CICD_PRIVATE_KEY }}
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.develop-branch }}
           fetch-depth: 0
